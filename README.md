@@ -1,0 +1,344 @@
+## ERC-8004 Identity Adapter
+
+This project lets an external token control an ERC-8004 `IdentityRegistry` record while the adapter proxy remains the on-chain owner of the ERC-8004 identity token.
+
+The adapter also writes canonical ERC-8004 binding metadata that matches the draft ERC in Ethereum/ERCs PR [#1648](https://github.com/ethereum/ERCs/pull/1648).
+
+Supported binding standards:
+
+- ERC-721
+- ERC-1155
+- ERC-6909
+
+## What The Adapter Does
+
+The adapter changes the control model from:
+
+- plain ERC-8004: controller is `ownerOf(agentId)` on the ERC-8004 registry
+
+to:
+
+- adapter model: controller is the holder of a bound external token
+
+The adapter itself owns the ERC-8004 token permanently. The external token holder does not own the ERC-8004 NFT directly, but can manage the record through the adapter.
+
+## Control Rules
+
+Each ERC-8004 `agentId` is bound once to exactly one external token:
+
+- ERC-721: controller is `ownerOf(tokenId)`
+- ERC-1155: controller is any account with `balanceOf(account, tokenId) > 0`
+- ERC-6909: controller is any account with `balanceOf(account, tokenId) > 0`
+
+The binding is immutable at the agent level:
+
+- the adapter does not expose any rebinding function
+- a single external token may register multiple ERC-8004 agents
+
+Important consequence:
+
+- ERC-1155 and ERC-6909 can create shared control if multiple accounts hold balance for the bound token id
+
+That is intentional. The adapter preserves the ownership semantics of the bound standard instead of inventing a synthetic single owner.
+
+This controller model is adapter-specific. The ERC draft standardizes binding discovery and binding verification, not universal controller semantics.
+
+## Architecture
+
+- proxy: `ERC1967Proxy`
+- implementation: UUPS upgradeable adapter
+- admin: `owner()` on the adapter
+- registry pointer: stored in adapter storage and changeable by admin
+
+Main contract:
+
+- [`src/Adapter8004.sol`](/Users/nxt3d/projects/adapter/src/Adapter8004.sol)
+
+Deployment script:
+
+- [`script/DeployAdapter.s.sol`](/Users/nxt3d/projects/adapter/script/DeployAdapter.s.sol)
+
+Registry interface used by the adapter:
+
+- [`src/interfaces/IERC8004IdentityRegistry.sol`](/Users/nxt3d/projects/adapter/src/interfaces/IERC8004IdentityRegistry.sol)
+
+## Flow
+
+### 1. Deploy
+
+You deploy:
+
+- an adapter implementation
+- an `ERC1967Proxy`
+- the proxy is initialized with:
+  - `identityRegistry`
+  - `initialOwner` / admin
+
+After deployment:
+
+- users interact with the proxy address
+- the admin can upgrade the adapter
+- the admin can update the `identityRegistry` address if ERC-8004 migrates
+
+### 2. Register A Bound Agent
+
+A user who controls an external token calls:
+
+```solidity
+register(standard, tokenContract, tokenId, agentURI, metadata)
+```
+
+The adapter does this:
+
+1. verifies the caller currently controls the external token
+2. rejects user metadata that tries to overwrite the canonical binding record
+3. calls `identityRegistry.register(...)`
+4. becomes owner of the new ERC-8004 identity token
+5. stores the immutable binding on that `agentId`
+6. writes canonical binding metadata under `agent-binding`
+7. immediately calls `unsetAgentWallet(agentId)`
+
+That last step matters because ERC-8004 sets `agentWallet = msg.sender` during registration. Since `msg.sender` is the adapter, the adapter clears that default wallet immediately.
+
+### Binding Metadata Format
+
+On every successful registration, the adapter writes canonical ERC-8004 metadata with:
+
+- key: `agent-binding`
+- value: `abi.encodePacked(bindingContract, tokenStandard, tokenContract, tokenIdLength, compactTokenId)`
+
+Where:
+
+- `bindingContract` is the adapter proxy address
+- `tokenStandard` is a single byte matching the adapter enum
+- `tokenContract` is the bound ERC-721 / ERC-1155 / ERC-6909 contract
+- `tokenIdLength` is a single byte containing the compact token id length
+- `compactTokenId` is the token id encoded in minimal big-endian bytes
+
+So the serialized value is:
+
+- 20 bytes: adapter proxy address
+- 1 byte: token standard enum
+- 20 bytes: bound token contract
+- 1 byte: compact token id length
+- N bytes: compact token id
+
+Enum values:
+
+- `0x00`: `ERC721`
+- `0x01`: `ERC1155`
+- `0x02`: `ERC6909`
+
+Examples:
+
+- ERC-721 token id `0` => standard `0x00`, length `0`, no token id bytes
+- ERC-721 token id `0x1234` => standard `0x00`, length `2`, bytes `0x12 0x34`
+- ERC-1155 token id `5` => standard `0x01`, length `1`, byte `0x05`
+
+The adapter reserves this key and rejects user attempts to set or batch-set it through the adapter.
+
+### Binding Verification
+
+The ERC-facing verification flow is:
+
+1. read the `agent-binding` metadata from the ERC-8004 record
+2. decode `bindingContract`, `tokenStandard`, `tokenContract`, and `tokenId`
+3. call `bindingOf(agentId)` on `bindingContract`
+4. verify that the returned binding matches the metadata
+
+That is the interoperable part.
+
+This adapter also exposes `isController(agentId, account)` as a convenience view, but that function is adapter-specific and is not part of the ERC draft.
+
+### 3. Manage The ERC-8004 Record
+
+After registration, the current controller of the bound token can call the adapter to:
+
+- `setAgentURI(agentId, newURI)`
+- `setMetadata(agentId, key, value)`
+- `setMetadataBatch(agentId, entries)`
+- `setAgentWallet(agentId, newWallet, deadline, signature)`
+- `unsetAgentWallet(agentId)`
+
+The adapter checks control against the bound token and then forwards the call to ERC-8004.
+
+### 4. Transfer Control
+
+Control changes automatically when the external token changes hands.
+
+Examples:
+
+- ERC-721: if token `#1` is transferred, the new owner becomes controller
+- ERC-1155: any holder with positive balance for the bound id is a controller
+- ERC-6909: any holder with positive balance for the bound id is a controller
+
+The ERC-8004 NFT itself is not transferred. It stays owned by the adapter.
+
+### 5. Bind Or Clear The Agent Wallet
+
+Wallet assignment still follows native ERC-8004 rules.
+
+The adapter does not bypass ERC-8004 signature checks. To set a wallet, the controller calls:
+
+```solidity
+setAgentWallet(agentId, newWallet, deadline, signature)
+```
+
+ERC-8004 then requires proof from `newWallet`:
+
+- EOA: valid EIP-712 signature
+- smart wallet: valid ERC-1271 signature
+
+Important detail:
+
+- the typed-data `owner` field used by ERC-8004 is the current owner of the ERC-8004 token
+- in this design, that owner is the adapter proxy address
+
+So the signed payload must use:
+
+- `owner = <adapter proxy address>`
+
+not:
+
+- `owner = <external token holder>`
+
+### 6. Upgrade Or Repoint
+
+The admin can:
+
+- upgrade the adapter implementation through UUPS
+- update `identityRegistry` to a new ERC-8004 registry address
+
+This is the escape hatch for future ERC-8004 changes.
+
+Note that repointing only changes where future forwarded calls go. It does not migrate already-created ERC-8004 identities out of an old registry.
+
+## ERC Alignment
+
+This repo tracks the agent-binding ERC draft in Ethereum/ERCs PR [#1648](https://github.com/ethereum/ERCs/pull/1648).
+
+The README and contract currently align on the following points:
+
+- reserved metadata key: `agent-binding`
+- metadata encoding:
+  - `abi.encodePacked(bindingContract, tokenStandard, tokenContract, tokenIdLength, compactTokenId)`
+- token standard enum values:
+  - `0x00` = `ERC721`
+  - `0x01` = `ERC1155`
+  - `0x02` = `ERC6909`
+- compact token id encoding:
+  - one length byte followed by minimal big-endian token id bytes
+- required verification surface:
+  - `bindingOf(uint256 agentId)`
+
+The adapter intentionally goes beyond the ERC draft by also exposing:
+
+- `register(...)`
+- `setAgentURI(...)`
+- `setMetadata(...)`
+- `setMetadataBatch(...)`
+- `setAgentWallet(...)`
+- `unsetAgentWallet(...)`
+- `isController(...)`
+
+## Diagram
+
+```mermaid
+flowchart TD
+    A[Admin] -->|deploys implementation + proxy| P[Adapter Proxy]
+    A -->|can upgrade UUPS implementation| P
+    A -->|can change identityRegistry address| P
+
+    U[User controlling external token] -->|register(standard, tokenContract, tokenId, agentURI, metadata)| P
+    T[Bound Token<br/>ERC-721 / ERC-1155 / ERC-6909] -->|proves control| P
+    P -->|register(...)| R[ERC-8004 IdentityRegistry]
+    R -->|mints ERC-8004 agent NFT to| P
+    P -->|stores agentId -> bound token| B[(binding storage)]
+    P -->|setMetadata(agent-binding, encoded binding)| R
+    P -->|unsetAgentWallet(agentId)| R
+
+    U -->|setAgentURI / setMetadata / setMetadataBatch| P
+    P -->|forwards if caller controls bound token| R
+
+    X[Verifier] -->|read agent-binding metadata| R
+    X -->|call bindingOf(agentId)| P
+    P -->|returns canonical binding| X
+
+    U -->|setAgentWallet(agentId,newWallet,deadline,signature)| P
+    P -->|forwards| R
+    W[New Wallet] -->|EIP-712 or ERC-1271 proof| R
+
+    T -->|transfer / balance change| C[Controller changes automatically]
+    C --> P
+```
+
+## Admin Model
+
+The adapter owner can:
+
+- upgrade the adapter implementation
+- change `identityRegistry`
+- transfer adapter ownership to a new admin
+
+The admin does not have a function to rewrite user bindings. The admin controls upgradeability and registry configuration, not per-agent reassignment through the current implementation.
+
+## Contract Surface
+
+User-facing functions:
+
+- `register(TokenStandard standard, address tokenContract, uint256 tokenId, string agentURI, MetadataEntry[] metadata)`
+- `setAgentURI(uint256 agentId, string newURI)`
+- `setMetadata(uint256 agentId, string metadataKey, bytes metadataValue)`
+- `setMetadataBatch(uint256 agentId, MetadataEntry[] metadata)`
+- `setAgentWallet(uint256 agentId, address newWallet, uint256 deadline, bytes signature)`
+- `unsetAgentWallet(uint256 agentId)`
+- `bindingOf(uint256 agentId)`
+- `isController(uint256 agentId, address account)`
+
+ERC-required verification function:
+
+- `bindingOf(uint256 agentId)`
+
+Adapter-specific convenience function:
+
+- `isController(uint256 agentId, address account)`
+
+Admin-facing functions:
+
+- `initialize(address identityRegistry, address initialOwner)`
+- `setIdentityRegistry(address newIdentityRegistry)`
+- `upgradeToAndCall(address newImplementation, bytes data)`
+
+## Build And Test
+
+```sh
+forge build
+forge test
+forge fmt
+```
+
+## Deploy
+
+```sh
+IDENTITY_REGISTRY_ADDRESS=<erc8004_registry> \
+ADAPTER_ADMIN=<admin> \
+forge script script/DeployAdapter.s.sol --broadcast
+```
+
+## Test Coverage
+
+The Foundry suite currently covers:
+
+- registration for ERC-721, ERC-1155, and ERC-6909 bindings
+- immutable per-agent bindings
+- repeated registration using the same external token
+- control transfer after external token transfers
+- metadata and URI updates
+- wallet-binding pass-through with valid and invalid ERC-8004 signatures
+- proxy initialization
+- admin-only registry repointing
+- admin-only implementation upgrades
+
+Tests:
+
+- [`test/Adapter8004.t.sol`](/Users/nxt3d/projects/adapter/test/Adapter8004.t.sol)

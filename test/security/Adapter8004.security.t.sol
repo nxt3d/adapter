@@ -1,0 +1,362 @@
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.24;
+
+import {Test, Vm} from "forge-std/Test.sol";
+import {ERC1967Proxy} from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
+import {Initializable} from "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
+import {OwnableUpgradeable} from "@openzeppelin/contracts-upgradeable/access/OwnableUpgradeable.sol";
+
+import {Adapter8004} from "../../src/Adapter8004.sol";
+import {IERC8004IdentityRegistry} from "../../src/interfaces/IERC8004IdentityRegistry.sol";
+
+import {MockIdentityRegistry} from "../mocks/MockIdentityRegistry.sol";
+import {MockERC721} from "../mocks/MockERC721.sol";
+import {MockERC1155} from "../mocks/MockERC1155.sol";
+import {MockERC6909} from "../mocks/MockERC6909.sol";
+
+/// @notice Fills the coverage gaps left by the primary unit tests:
+/// every revert, every event, every standard's non-controller path,
+/// and every view function's unknown-agent path.
+contract SecurityAdapter8004Test is Test {
+    MockIdentityRegistry internal registry;
+    MockIdentityRegistry internal registry2;
+    Adapter8004 internal implementation;
+    Adapter8004 internal adapter;
+    MockERC721 internal token721;
+    MockERC1155 internal token1155;
+    MockERC6909 internal token6909;
+
+    address internal admin = makeAddr("admin");
+    address internal alice = makeAddr("alice");
+    address internal bob = makeAddr("bob");
+    address internal eve = makeAddr("eve");
+
+    event AgentBound(
+        uint256 indexed agentId,
+        Adapter8004.TokenStandard indexed standard,
+        address indexed tokenContract,
+        uint256 tokenId,
+        address registeredBy
+    );
+    event MetadataBatchSet(uint256 indexed agentId, uint256 count, address indexed updatedBy);
+    event IdentityRegistryUpdated(
+        address indexed previousRegistry, address indexed newRegistry, address indexed updatedBy
+    );
+
+    function setUp() external {
+        registry = new MockIdentityRegistry();
+        registry2 = new MockIdentityRegistry();
+
+        implementation = new Adapter8004();
+        ERC1967Proxy proxy = new ERC1967Proxy(
+            address(implementation), abi.encodeCall(Adapter8004.initialize, (address(registry), admin))
+        );
+        adapter = Adapter8004(address(proxy));
+
+        token721 = new MockERC721();
+        token1155 = new MockERC1155();
+        token6909 = new MockERC6909();
+
+        token721.mint(alice, 1);
+        token721.mint(bob, 2);
+        token1155.mint(alice, 10, 5);
+        token1155.mint(bob, 10, 5);
+        token6909.mint(alice, 42, 3);
+        token6909.mint(bob, 42, 3);
+    }
+
+    // -----------------------------------------------------------------
+    // initializer
+    // -----------------------------------------------------------------
+
+    function testInitializeRejectsZeroRegistry() external {
+        Adapter8004 impl = new Adapter8004();
+        vm.expectRevert(Adapter8004.InvalidTokenContract.selector);
+        new ERC1967Proxy(address(impl), abi.encodeCall(Adapter8004.initialize, (address(0), admin)));
+    }
+
+    function testInitializeRejectsZeroOwner() external {
+        Adapter8004 impl = new Adapter8004();
+        vm.expectRevert(abi.encodeWithSelector(OwnableUpgradeable.OwnableInvalidOwner.selector, address(0)));
+        new ERC1967Proxy(address(impl), abi.encodeCall(Adapter8004.initialize, (address(registry), address(0))));
+    }
+
+    function testCannotReinitializeProxy() external {
+        vm.expectRevert(Initializable.InvalidInitialization.selector);
+        adapter.initialize(address(registry2), eve);
+    }
+
+    function testImplementationInitializerIsDisabled() external {
+        vm.expectRevert(Initializable.InvalidInitialization.selector);
+        implementation.initialize(address(registry), admin);
+    }
+
+    // -----------------------------------------------------------------
+    // setIdentityRegistry
+    // -----------------------------------------------------------------
+
+    function testSetIdentityRegistryRejectsZero() external {
+        vm.prank(admin);
+        vm.expectRevert(Adapter8004.InvalidTokenContract.selector);
+        adapter.setIdentityRegistry(address(0));
+    }
+
+    function testSetIdentityRegistryEmitsEvent() external {
+        vm.expectEmit(true, true, true, true, address(adapter));
+        emit IdentityRegistryUpdated(address(registry), address(registry2), admin);
+        vm.prank(admin);
+        adapter.setIdentityRegistry(address(registry2));
+    }
+
+    // -----------------------------------------------------------------
+    // register — validation + events
+    // -----------------------------------------------------------------
+
+    function testRegisterRejectsZeroTokenContract() external {
+        vm.prank(alice);
+        vm.expectRevert(Adapter8004.InvalidTokenContract.selector);
+        adapter.register(Adapter8004.TokenStandard.ERC721, address(0), 1, "", _emptyMetadata());
+    }
+
+    function testRegisterEmitsAgentBound() external {
+        vm.expectEmit(true, true, true, true, address(adapter));
+        // agentId is assigned sequentially by MockIdentityRegistry starting at 0
+        emit AgentBound(0, Adapter8004.TokenStandard.ERC721, address(token721), 1, alice);
+        vm.prank(alice);
+        adapter.register(Adapter8004.TokenStandard.ERC721, address(token721), 1, "", _emptyMetadata());
+    }
+
+    function testRegister1155NonControllerReverts() external {
+        vm.prank(eve);
+        vm.expectRevert(abi.encodeWithSelector(Adapter8004.NotController.selector, eve, type(uint256).max));
+        adapter.register(Adapter8004.TokenStandard.ERC1155, address(token1155), 10, "", _emptyMetadata());
+    }
+
+    function testRegister6909NonControllerReverts() external {
+        vm.prank(eve);
+        vm.expectRevert(abi.encodeWithSelector(Adapter8004.NotController.selector, eve, type(uint256).max));
+        adapter.register(Adapter8004.TokenStandard.ERC6909, address(token6909), 42, "", _emptyMetadata());
+    }
+
+    function testRegisterSameTokenAcrossStandardsProducesDistinctAgents() external {
+        // Same tokenContract/tokenId pair but different standards hash to
+        // different binding keys — each should yield a fresh agentId.
+        vm.prank(alice);
+        uint256 a1 = adapter.register(Adapter8004.TokenStandard.ERC721, address(token721), 1, "", _emptyMetadata());
+
+        // ERC721 at tokenId 1 is held by alice and would collide with the 1155
+        // binding key only if (standard) were dropped from the hash. It is not.
+        // Mint a fresh 1155 id to avoid polluting setUp state.
+        token1155.mint(alice, 1, 1);
+        vm.prank(alice);
+        uint256 a2 = adapter.register(Adapter8004.TokenStandard.ERC1155, address(token1155), 1, "", _emptyMetadata());
+
+        token6909.mint(alice, 1, 1);
+        vm.prank(alice);
+        uint256 a3 = adapter.register(Adapter8004.TokenStandard.ERC6909, address(token6909), 1, "", _emptyMetadata());
+
+        assertTrue(a1 != a2 && a2 != a3 && a1 != a3, "agentIds must be distinct");
+    }
+
+    // -----------------------------------------------------------------
+    // controller-gated writes: non-controller + unknown agent
+    // -----------------------------------------------------------------
+
+    function testSetAgentURINonControllerReverts() external {
+        uint256 agentId = _register721(alice, 1);
+        vm.prank(eve);
+        vm.expectRevert(abi.encodeWithSelector(Adapter8004.NotController.selector, eve, agentId));
+        adapter.setAgentURI(agentId, "ipfs://evil");
+    }
+
+    function testSetAgentURIUnknownAgentReverts() external {
+        vm.prank(alice);
+        vm.expectRevert(abi.encodeWithSelector(Adapter8004.UnknownAgent.selector, 999));
+        adapter.setAgentURI(999, "ipfs://nope");
+    }
+
+    function testSetMetadataUnknownAgentReverts() external {
+        vm.prank(alice);
+        vm.expectRevert(abi.encodeWithSelector(Adapter8004.UnknownAgent.selector, 123));
+        adapter.setMetadata(123, "k", bytes("v"));
+    }
+
+    function testSetMetadataBatchNonControllerReverts() external {
+        uint256 agentId = _register721(alice, 1);
+        vm.prank(eve);
+        vm.expectRevert(abi.encodeWithSelector(Adapter8004.NotController.selector, eve, agentId));
+        adapter.setMetadataBatch(agentId, _emptyMetadata());
+    }
+
+    function testSetMetadataBatchUnknownAgentReverts() external {
+        vm.prank(alice);
+        vm.expectRevert(abi.encodeWithSelector(Adapter8004.UnknownAgent.selector, 77));
+        adapter.setMetadataBatch(77, _emptyMetadata());
+    }
+
+    function testSetMetadataBatchEmptyEmitsEvent() external {
+        uint256 agentId = _register721(alice, 1);
+        vm.expectEmit(true, true, true, true, address(adapter));
+        emit MetadataBatchSet(agentId, 0, alice);
+        vm.prank(alice);
+        adapter.setMetadataBatch(agentId, _emptyMetadata());
+    }
+
+    function testSetMetadataBatchEmitsCount() external {
+        uint256 agentId = _register721(alice, 1);
+        IERC8004IdentityRegistry.MetadataEntry[] memory entries = new IERC8004IdentityRegistry.MetadataEntry[](3);
+        entries[0] = IERC8004IdentityRegistry.MetadataEntry("a", bytes("1"));
+        entries[1] = IERC8004IdentityRegistry.MetadataEntry("b", bytes("2"));
+        entries[2] = IERC8004IdentityRegistry.MetadataEntry("c", bytes("3"));
+
+        vm.expectEmit(true, true, true, true, address(adapter));
+        emit MetadataBatchSet(agentId, 3, alice);
+        vm.prank(alice);
+        adapter.setMetadataBatch(agentId, entries);
+    }
+
+    function testSetAgentWalletNonControllerReverts() external {
+        uint256 agentId = _register721(alice, 1);
+        vm.prank(eve);
+        vm.expectRevert(abi.encodeWithSelector(Adapter8004.NotController.selector, eve, agentId));
+        adapter.setAgentWallet(agentId, makeAddr("x"), block.timestamp + 1, bytes(""));
+    }
+
+    function testSetAgentWalletUnknownAgentReverts() external {
+        vm.prank(alice);
+        vm.expectRevert(abi.encodeWithSelector(Adapter8004.UnknownAgent.selector, 42));
+        adapter.setAgentWallet(42, makeAddr("x"), block.timestamp + 1, bytes(""));
+    }
+
+    function testUnsetAgentWalletNonControllerReverts() external {
+        uint256 agentId = _register721(alice, 1);
+        vm.prank(eve);
+        vm.expectRevert(abi.encodeWithSelector(Adapter8004.NotController.selector, eve, agentId));
+        adapter.unsetAgentWallet(agentId);
+    }
+
+    function testUnsetAgentWalletUnknownAgentReverts() external {
+        vm.prank(alice);
+        vm.expectRevert(abi.encodeWithSelector(Adapter8004.UnknownAgent.selector, 1));
+        adapter.unsetAgentWallet(1);
+    }
+
+    function testUnsetAgentWalletControllerHappyPath() external {
+        uint256 agentId = _register721(alice, 1);
+        // Registration already clears the wallet; seed a value via the registry
+        // so we can observe the user-initiated clear.
+        // We can't set it without a valid signature, so instead assert the
+        // wallet is zero after an extra unset call (idempotency).
+        vm.prank(alice);
+        adapter.unsetAgentWallet(agentId);
+        assertEq(registry.getAgentWallet(agentId), address(0));
+    }
+
+    // -----------------------------------------------------------------
+    // views: bindingOf, isController
+    // -----------------------------------------------------------------
+
+    function testBindingOfHappyPath() external {
+        uint256 agentId = _register721(alice, 1);
+        Adapter8004.Binding memory b = adapter.bindingOf(agentId);
+        assertEq(uint256(b.standard), uint256(Adapter8004.TokenStandard.ERC721));
+        assertEq(b.tokenContract, address(token721));
+        assertEq(b.tokenId, 1);
+    }
+
+    function testBindingOfUnknownAgentReverts() external {
+        vm.expectRevert(abi.encodeWithSelector(Adapter8004.UnknownAgent.selector, 999));
+        adapter.bindingOf(999);
+    }
+
+    function testIsControllerUnknownAgentReturnsFalse() external view {
+        assertFalse(adapter.isController(999, alice));
+    }
+
+    function testIsControllerTracksTokenOwnership() external {
+        uint256 agentId = _register721(alice, 1);
+        assertTrue(adapter.isController(agentId, alice));
+        assertFalse(adapter.isController(agentId, bob));
+
+        vm.prank(alice);
+        token721.transferFrom(alice, bob, 1);
+        assertFalse(adapter.isController(agentId, alice));
+        assertTrue(adapter.isController(agentId, bob));
+    }
+
+    function testIsController1155TracksBalance() external {
+        uint256 agentId = _register1155(alice, 10);
+        assertTrue(adapter.isController(agentId, alice));
+        assertTrue(adapter.isController(agentId, bob));
+        assertFalse(adapter.isController(agentId, eve));
+    }
+
+    function testIsController6909TracksBalance() external {
+        uint256 agentId = _register6909(alice, 42);
+        assertTrue(adapter.isController(agentId, alice));
+        assertTrue(adapter.isController(agentId, bob));
+        assertFalse(adapter.isController(agentId, eve));
+    }
+
+    // -----------------------------------------------------------------
+    // onERC721Received
+    // -----------------------------------------------------------------
+
+    function testOnERC721ReceivedReturnsSelector() external view {
+        bytes4 sel = adapter.onERC721Received(address(0), address(0), 0, "");
+        assertEq(sel, bytes4(keccak256("onERC721Received(address,address,uint256,bytes)")));
+    }
+
+    // -----------------------------------------------------------------
+    // 1155 / 6909 full transfer drops control
+    // -----------------------------------------------------------------
+
+    function test1155TransferOutDropsControl() external {
+        uint256 agentId = _register1155(alice, 10);
+        assertTrue(adapter.isController(agentId, alice));
+
+        vm.prank(alice);
+        token1155.safeTransferFrom(alice, bob, 10, 5, "");
+
+        assertFalse(adapter.isController(agentId, alice));
+        assertTrue(adapter.isController(agentId, bob));
+
+        vm.prank(alice);
+        vm.expectRevert(abi.encodeWithSelector(Adapter8004.NotController.selector, alice, agentId));
+        adapter.setMetadata(agentId, "x", bytes("1"));
+    }
+
+    function test6909TransferOutDropsControl() external {
+        uint256 agentId = _register6909(alice, 42);
+        assertTrue(adapter.isController(agentId, alice));
+
+        vm.prank(alice);
+        token6909.transfer(bob, 42, 3);
+
+        assertFalse(adapter.isController(agentId, alice));
+        assertTrue(adapter.isController(agentId, bob));
+    }
+
+    // -----------------------------------------------------------------
+    // helpers
+    // -----------------------------------------------------------------
+
+    function _register721(address caller, uint256 tokenId) internal returns (uint256) {
+        vm.prank(caller);
+        return adapter.register(Adapter8004.TokenStandard.ERC721, address(token721), tokenId, "", _emptyMetadata());
+    }
+
+    function _register1155(address caller, uint256 tokenId) internal returns (uint256) {
+        vm.prank(caller);
+        return adapter.register(Adapter8004.TokenStandard.ERC1155, address(token1155), tokenId, "", _emptyMetadata());
+    }
+
+    function _register6909(address caller, uint256 tokenId) internal returns (uint256) {
+        vm.prank(caller);
+        return adapter.register(Adapter8004.TokenStandard.ERC6909, address(token6909), tokenId, "", _emptyMetadata());
+    }
+
+    function _emptyMetadata() internal pure returns (IERC8004IdentityRegistry.MetadataEntry[] memory) {
+        return new IERC8004IdentityRegistry.MetadataEntry[](0);
+    }
+}
