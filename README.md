@@ -4,6 +4,8 @@ This project lets an external token control an ERC-8004 `IdentityRegistry` recor
 
 The adapter also writes canonical ERC-8004 binding metadata that matches the draft ERC in Ethereum/ERCs PR [#1648](https://github.com/ethereum/ERCs/pull/1648).
 
+The binding contract and the bound token contract can be different contracts or the same contract. This repo uses a separate adapter contract, but the metadata format and ERC flow also support token contracts that implement the binding interface themselves.
+
 Supported binding standards:
 
 - ERC-721
@@ -136,6 +138,11 @@ Examples:
 - ERC-1155 token id `5` => standard `0x01`, length `1`, byte `0x05`
 
 The adapter reserves this key and rejects user attempts to set or batch-set it through the adapter.
+
+Note:
+
+- `bindingContract` and `tokenContract` may be different addresses
+- `bindingContract` and `tokenContract` may also be the same address if the token contract directly implements the binding logic
 
 ### Binding Verification
 
@@ -319,10 +326,18 @@ forge fmt
 
 ## Deploy
 
+Copy `.env.example` to `.env` and fill in the values:
+
 ```sh
-IDENTITY_REGISTRY_ADDRESS=<erc8004_registry> \
-ADAPTER_ADMIN=<admin> \
-forge script script/DeployAdapter.s.sol --broadcast
+cp .env.example .env
+# edit .env — set IDENTITY_REGISTRY_ADDRESS, PRIVATE_KEY, and RPC_URL
+```
+
+Then source it and run the script. The deployer becomes the adapter admin automatically:
+
+```sh
+source .env
+forge script script/DeployAdapter.s.sol --rpc-url $RPC_URL --broadcast
 ```
 
 ## Test Coverage
