@@ -3,4 +3,6 @@
 cache/
 out/
 broadcast/
+.env
+.env.local
 

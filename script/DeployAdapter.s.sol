@@ -10,18 +10,19 @@ contract DeployAdapterScript is Script {
         // 1. Load the target ERC-8004 registry the adapter will forward into.
         address identityRegistry = vm.envAddress("IDENTITY_REGISTRY_ADDRESS");
 
-        // 2. Load the admin that will control upgrades and registry repointing.
-        address initialOwner = vm.envAddress("ADAPTER_ADMIN");
+        // 2. Load the deployer private key. The deployer becomes the admin.
+        uint256 deployerKey = vm.envUint("PRIVATE_KEY");
+        address deployer = vm.addr(deployerKey);
 
-        // 3. Start the deployment broadcast.
-        vm.startBroadcast();
+        // 3. Start the deployment broadcast as the deployer.
+        vm.startBroadcast(deployerKey);
 
         // 4. Deploy the adapter implementation contract.
         Adapter8004 implementation = new Adapter8004();
 
-        // 5. Deploy the proxy and initialize it with the registry and admin.
+        // 5. Deploy the proxy and initialize it with the registry and deployer-as-admin.
         ERC1967Proxy proxy = new ERC1967Proxy(
-            address(implementation), abi.encodeCall(Adapter8004.initialize, (identityRegistry, initialOwner))
+            address(implementation), abi.encodeCall(Adapter8004.initialize, (identityRegistry, deployer))
         );
 
         // 6. Return the proxy address typed as the adapter interface.
