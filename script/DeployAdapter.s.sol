@@ -11,7 +11,7 @@ contract DeployAdapterScript is Script {
         address identityRegistry = vm.envAddress("IDENTITY_REGISTRY_ADDRESS");
 
         // 2. Load the deployer private key. The deployer becomes the admin.
-        uint256 deployerKey = vm.envUint("PRIVATE_KEY");
+        uint256 deployerKey = vm.envUint("DEPLOYER_PRIVATE_KEY");
         address deployer = vm.addr(deployerKey);
 
         // 3. Start the deployment broadcast as the deployer.

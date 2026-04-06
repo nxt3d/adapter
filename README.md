@@ -59,10 +59,43 @@ Main contract:
 Deployment script:
 
 - [`script/DeployAdapter.s.sol`](/Users/nxt3d/projects/adapter/script/DeployAdapter.s.sol)
+- [`script/deploy.sh`](/Users/nxt3d/projects/adapter/script/deploy.sh)
 
 Registry interface used by the adapter:
 
 - [`src/interfaces/IERC8004IdentityRegistry.sol`](/Users/nxt3d/projects/adapter/src/interfaces/IERC8004IdentityRegistry.sol)
+
+Deployment report:
+
+- [`deployments/2026-04-05-deployment-report.md`](/Users/nxt3d/projects/adapter/deployments/2026-04-05-deployment-report.md)
+
+## Deployments
+
+Deployment date:
+
+- `2026-04-05`
+
+Shared ERC-8004 `IdentityRegistry`:
+
+- `0x8004A818BFB912233c491871b3d84c89A494BD9e`
+
+Adapter proxy addresses:
+
+- Ethereum mainnet: `0xC38570C2c356E98fF4d07E4Be164307D8A4AB556`
+- Base: `0xD83A132Df91869452d358Eba6C54DcA827c83498`
+- Sepolia: `0x7621630cB63a73a194f45A3E6801B8C6A7eC2f92`
+
+Adapter implementation addresses:
+
+- Ethereum mainnet: `0x4fF37d9C22f40726F39429677aE2537153803d52`
+- Base: `0xF2bFc17D87a774c32C6e950640db8A34AF758981`
+- Sepolia: `0x5Ced539aE5Fe67183a2bA4E984F92D57dFB3bd49`
+
+Admin:
+
+- `0xF8e03bd4436371E0e2F7C02E529b2172fe72b4EF`
+
+Users and integrators should interact with the proxy addresses, not the implementation addresses.
 
 ## Flow
 
@@ -330,14 +363,37 @@ Copy `.env.example` to `.env` and fill in the values:
 
 ```sh
 cp .env.example .env
-# edit .env — set IDENTITY_REGISTRY_ADDRESS, PRIVATE_KEY, and RPC_URL
+# edit .env
 ```
 
-Then source it and run the script. The deployer becomes the adapter admin automatically:
+Required environment variables:
+
+- `DEPLOYER_PRIVATE_KEY`
+- `BASE_RPC_URL`
+- `MAINNET_RPC_URL`
+- `SEPOLIA_RPC_URL`
+- `BASE_IDENTITY_REGISTRY_ADDRESS`
+- `MAINNET_IDENTITY_REGISTRY_ADDRESS`
+- `SEPOLIA_IDENTITY_REGISTRY_ADDRESS`
+
+The deployer becomes the adapter admin automatically.
+
+Deploy to Base:
 
 ```sh
-source .env
-forge script script/DeployAdapter.s.sol --rpc-url $RPC_URL --broadcast
+script/deploy.sh base
+```
+
+Deploy to Ethereum mainnet:
+
+```sh
+script/deploy.sh mainnet
+```
+
+Deploy to Sepolia:
+
+```sh
+script/deploy.sh sepolia
 ```
 
 ## Test Coverage
