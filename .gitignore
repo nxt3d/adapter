@@ -8,3 +8,5 @@ broadcast/
 
 
 playground/
+src/DummyAgentCollection.sol
+test/DummyAgentCollection.t.sol
