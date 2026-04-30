@@ -78,9 +78,7 @@ contract Adapter8004Test is Test {
         assertEq(registry.tokenURI(agentId), "ipfs://agent/1");
         assertEq(string(registry.getMetadata(agentId, "name")), "alpha");
         assertEq(registry.getAgentWallet(agentId), address(0));
-        assertEq(
-            registry.getMetadata(agentId, adapter.BINDING_METADATA_KEY()), adapter.encodeBindingMetadata(address(adapter))
-        );
+        assertEq(registry.getMetadata(agentId, adapter.BINDING_METADATA_KEY()), abi.encodePacked(address(adapter)));
     }
 
     function test721ControllerCanUpdateRegistryFields() external {
@@ -173,9 +171,9 @@ contract Adapter8004Test is Test {
         assertEq(string(registry.getMetadata(agentId, "b")), "2");
     }
 
-    function testEncodeBindingMetadataIsTwentyByteAddress() external view {
+    function testBindingMetadataEncodingIsTwentyByteAddress() external view {
         address binding = address(adapter);
-        bytes memory encoded = adapter.encodeBindingMetadata(binding);
+        bytes memory encoded = abi.encodePacked(binding);
         assertEq(encoded.length, 20);
         assertEq(encoded, abi.encodePacked(binding));
     }

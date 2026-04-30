@@ -96,7 +96,7 @@ contract Adapter8004 is Initializable, OwnableUpgradeable, UUPSUpgradeable, IERC
         _bindings[agentId] = Binding({standard: standard, tokenContract: tokenContract, tokenId: tokenId});
 
         // 6. Write the canonical binding metadata (binding contract address only; ERC-8217).
-        identityRegistry.setMetadata(agentId, BINDING_METADATA_KEY, encodeBindingMetadata(address(this)));
+        identityRegistry.setMetadata(agentId, BINDING_METADATA_KEY, abi.encodePacked(address(this)));
 
         // 7. Clear the default ERC-8004 wallet because registration set it to the adapter.
         identityRegistry.unsetAgentWallet(agentId);
@@ -143,11 +143,6 @@ contract Adapter8004 is Initializable, OwnableUpgradeable, UUPSUpgradeable, IERC
         emit MetadataBatchSet(agentId, length, msg.sender);
     }
 
-    /// @notice ERC-8217 `agent-binding` value: exactly the binding contract address (`abi.encodePacked(bindingContract)`).
-    function encodeBindingMetadata(address bindingContract) public pure returns (bytes memory) {
-        return abi.encodePacked(bindingContract);
-    }
-
     /// @notice Owner-only migration helper to rewrite legacy `agent-binding` rows into the ERC-8217 20-byte format.
     function rewriteBindingMetadata(uint256 agentId) external onlyOwner {
         // 1. Reject unknown agents before touching registry state.
@@ -157,7 +152,7 @@ contract Adapter8004 is Initializable, OwnableUpgradeable, UUPSUpgradeable, IERC
         }
 
         // 2. Rewrite the canonical metadata using the proxy address as the binding contract.
-        identityRegistry.setMetadata(agentId, BINDING_METADATA_KEY, encodeBindingMetadata(address(this)));
+        identityRegistry.setMetadata(agentId, BINDING_METADATA_KEY, abi.encodePacked(address(this)));
     }
 
     function setAgentWallet(uint256 agentId, address newWallet, uint256 deadline, bytes calldata signature) external {

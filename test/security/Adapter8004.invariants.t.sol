@@ -106,7 +106,7 @@ contract SecurityAdapter8004InvariantsTest is Test {
             adapter.register(IERCAgentBindings.TokenStandard.ERC721, address(token721), tokenId, "", _emptyMetadata());
 
         bytes memory stored = registry.getMetadata(agentId, adapter.BINDING_METADATA_KEY());
-        bytes memory expected = adapter.encodeBindingMetadata(address(adapter));
+        bytes memory expected = abi.encodePacked(address(adapter));
         assertEq(stored, expected, "canonical binding metadata drift");
         assertEq(stored.length, 20, "binding metadata must be 20 bytes");
     }

@@ -85,7 +85,7 @@ forge script script/UpgradeAdapter.s.sol:UpgradeAdapterScript \
    - `identityRegistry()` unchanged
    - `owner()` unchanged
    - implementation slot updated
-   - `encodeBindingMetadata(proxy)` returns 20 bytes
+   - `getMetadata(agentId, "agent-binding")` continues to decode as exactly 20 bytes for migrated or newly registered agents
 5. If the pre-upgrade audit found agent ids, run:
 
 ```bash
@@ -134,7 +134,8 @@ Given the current audit result of zero registered ids, rollback remains straight
 
 - Upgrade succeeds on Sepolia, then Base, then Mainnet.
 - `identityRegistry()` and `owner()` remain unchanged after each upgrade.
-- The proxy, not the implementation, remains the binding contract address written by `encodeBindingMetadata(address(this))`.
+- The proxy, not the implementation, remains the binding contract address written by `abi.encodePacked(address(this))`.
+- Off-chain readers no longer have any adapter ABI helper for this encoding; they must treat the metadata value itself as a 20-byte packed address and then call `bindingOf(agentId)` on that address.
 - `_authorizeUpgrade` remains owner-gated.
 - If any agent ids exist at execution time, every `agent-binding` row re-classifies to exactly 20 bytes after migration.
 - No on-chain writes use the reserved `agent-binding` key except the adapter itself.

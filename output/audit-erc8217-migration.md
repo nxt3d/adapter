@@ -117,7 +117,7 @@ Key tests and what they prove:
 | [testIsController1155TracksBalance](/Users/nxt3d/projects/adapter/test/security/Adapter8004.security.t.sol:296) | Read-path ERC-1155 controller logic remains correct |
 | [testIsController6909TracksBalance](/Users/nxt3d/projects/adapter/test/security/Adapter8004.security.t.sol:303) | Read-path ERC-6909 controller logic remains correct |
 | [testFuzzBindingImmutableAcrossAllWrites](/Users/nxt3d/projects/adapter/test/security/Adapter8004.invariants.t.sol:63) | `_bindings` state is not mutated by unrelated writes |
-| [testFuzzCanonicalBindingMetadataMatchesEncoder](/Users/nxt3d/projects/adapter/test/security/Adapter8004.invariants.t.sol:100) | Stored metadata always matches the encoder |
+| [testFuzzCanonicalBindingMetadataMatchesEncoder](/Users/nxt3d/projects/adapter/test/security/Adapter8004.invariants.t.sol:100) | Stored metadata always matches the inline `abi.encodePacked(address(adapter))` form |
 | [testFuzzInitialWalletClearedAfterRegister](/Users/nxt3d/projects/adapter/test/security/Adapter8004.invariants.t.sol:45) | Existing wallet-clearing behavior remains intact |
 | [testRegisterRevertsCleanlyWhenRegistryFails](/Users/nxt3d/projects/adapter/test/security/Adapter8004.invariants.t.sol:159) | Registration remains atomic under downstream failure |
 | [testAdminCanUpgradeImplementation](/Users/nxt3d/projects/adapter/test/Adapter8004.t.sol:309) | UUPS upgrade path still works |
@@ -127,7 +127,7 @@ Key tests and what they prove:
 
 ### Proxy address must remain the binding contract
 
-This implementation writes `encodeBindingMetadata(address(this))` during both registration and rewrite: [src/Adapter8004.sol](/Users/nxt3d/projects/adapter/src/Adapter8004.sol:99), [src/Adapter8004.sol](/Users/nxt3d/projects/adapter/src/Adapter8004.sol:160)
+This implementation writes `abi.encodePacked(address(this))` during both registration and rewrite: [src/Adapter8004.sol](/Users/nxt3d/projects/adapter/src/Adapter8004.sol:99), [src/Adapter8004.sol](/Users/nxt3d/projects/adapter/src/Adapter8004.sol:154)
 
 Under UUPS delegatecall, `address(this)` is the proxy address, not the implementation address. That is correct and required by ERC-8217 because clients later call `bindingOf(agentId)` on the stored address. If this code were ever executed against the implementation directly, metadata would point at the wrong address, but production usage is proxied and tests instantiate the proxy path.
 
@@ -146,6 +146,7 @@ Consumers that need to switch:
 
 - Any client that decodes `agent-binding` as `address + standard + tokenContract + tokenIdLength + compactTokenId`
 - Any client that relied on the removed selector `encodeBindingMetadata(address,uint8,address,uint256)`
+- Any off-chain caller that relied on the now-removed trivial helper `encodeBindingMetadata(address)`
 - Any indexer or verifier that treated the metadata payload itself as the canonical token binding
 
 Consumers should now:
