@@ -1,12 +1,13 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.24;
 
-import {Test, Vm} from "forge-std/Test.sol";
+import {Test} from "forge-std/Test.sol";
 import {ERC1967Proxy} from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
 import {Initializable} from "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
 import {OwnableUpgradeable} from "@openzeppelin/contracts-upgradeable/access/OwnableUpgradeable.sol";
 
 import {Adapter8004} from "../../src/Adapter8004.sol";
+import {IERCAgentBindings} from "../../src/interfaces/IERCAgentBindings.sol";
 import {IERC8004IdentityRegistry} from "../../src/interfaces/IERC8004IdentityRegistry.sol";
 
 import {MockIdentityRegistry} from "../mocks/MockIdentityRegistry.sol";
@@ -33,7 +34,7 @@ contract SecurityAdapter8004Test is Test {
 
     event AgentBound(
         uint256 indexed agentId,
-        Adapter8004.TokenStandard indexed standard,
+        IERCAgentBindings.TokenStandard indexed standard,
         address indexed tokenContract,
         uint256 tokenId,
         address registeredBy
@@ -115,45 +116,45 @@ contract SecurityAdapter8004Test is Test {
     function testRegisterRejectsZeroTokenContract() external {
         vm.prank(alice);
         vm.expectRevert(Adapter8004.InvalidTokenContract.selector);
-        adapter.register(Adapter8004.TokenStandard.ERC721, address(0), 1, "", _emptyMetadata());
+        adapter.register(IERCAgentBindings.TokenStandard.ERC721, address(0), 1, "", _emptyMetadata());
     }
 
     function testRegisterEmitsAgentBound() external {
         vm.expectEmit(true, true, true, true, address(adapter));
         // agentId is assigned sequentially by MockIdentityRegistry starting at 0
-        emit AgentBound(0, Adapter8004.TokenStandard.ERC721, address(token721), 1, alice);
+        emit AgentBound(0, IERCAgentBindings.TokenStandard.ERC721, address(token721), 1, alice);
         vm.prank(alice);
-        adapter.register(Adapter8004.TokenStandard.ERC721, address(token721), 1, "", _emptyMetadata());
+        adapter.register(IERCAgentBindings.TokenStandard.ERC721, address(token721), 1, "", _emptyMetadata());
     }
 
     function testRegister1155NonControllerReverts() external {
         vm.prank(eve);
         vm.expectRevert(abi.encodeWithSelector(Adapter8004.NotController.selector, eve, type(uint256).max));
-        adapter.register(Adapter8004.TokenStandard.ERC1155, address(token1155), 10, "", _emptyMetadata());
+        adapter.register(IERCAgentBindings.TokenStandard.ERC1155, address(token1155), 10, "", _emptyMetadata());
     }
 
     function testRegister6909NonControllerReverts() external {
         vm.prank(eve);
         vm.expectRevert(abi.encodeWithSelector(Adapter8004.NotController.selector, eve, type(uint256).max));
-        adapter.register(Adapter8004.TokenStandard.ERC6909, address(token6909), 42, "", _emptyMetadata());
+        adapter.register(IERCAgentBindings.TokenStandard.ERC6909, address(token6909), 42, "", _emptyMetadata());
     }
 
     function testRegisterSameTokenAcrossStandardsProducesDistinctAgents() external {
         // Same tokenContract/tokenId pair but different standards hash to
         // different binding keys — each should yield a fresh agentId.
         vm.prank(alice);
-        uint256 a1 = adapter.register(Adapter8004.TokenStandard.ERC721, address(token721), 1, "", _emptyMetadata());
+        uint256 a1 = adapter.register(IERCAgentBindings.TokenStandard.ERC721, address(token721), 1, "", _emptyMetadata());
 
         // ERC721 at tokenId 1 is held by alice and would collide with the 1155
         // binding key only if (standard) were dropped from the hash. It is not.
         // Mint a fresh 1155 id to avoid polluting setUp state.
         token1155.mint(alice, 1, 1);
         vm.prank(alice);
-        uint256 a2 = adapter.register(Adapter8004.TokenStandard.ERC1155, address(token1155), 1, "", _emptyMetadata());
+        uint256 a2 = adapter.register(IERCAgentBindings.TokenStandard.ERC1155, address(token1155), 1, "", _emptyMetadata());
 
         token6909.mint(alice, 1, 1);
         vm.prank(alice);
-        uint256 a3 = adapter.register(Adapter8004.TokenStandard.ERC6909, address(token6909), 1, "", _emptyMetadata());
+        uint256 a3 = adapter.register(IERCAgentBindings.TokenStandard.ERC6909, address(token6909), 1, "", _emptyMetadata());
 
         assertTrue(a1 != a2 && a2 != a3 && a1 != a3, "agentIds must be distinct");
     }
@@ -252,14 +253,22 @@ contract SecurityAdapter8004Test is Test {
         assertEq(registry.getAgentWallet(agentId), address(0));
     }
 
+    function testRewriteBindingMetadataIsOwnerOnly() external {
+        uint256 agentId = _register721(alice, 1);
+
+        vm.prank(alice);
+        vm.expectRevert();
+        adapter.rewriteBindingMetadata(agentId);
+    }
+
     // -----------------------------------------------------------------
     // views: bindingOf, isController
     // -----------------------------------------------------------------
 
     function testBindingOfHappyPath() external {
         uint256 agentId = _register721(alice, 1);
-        Adapter8004.Binding memory b = adapter.bindingOf(agentId);
-        assertEq(uint256(b.standard), uint256(Adapter8004.TokenStandard.ERC721));
+        IERCAgentBindings.Binding memory b = adapter.bindingOf(agentId);
+        assertEq(uint256(b.standard), uint256(IERCAgentBindings.TokenStandard.ERC721));
         assertEq(b.tokenContract, address(token721));
         assertEq(b.tokenId, 1);
     }
@@ -343,17 +352,17 @@ contract SecurityAdapter8004Test is Test {
 
     function _register721(address caller, uint256 tokenId) internal returns (uint256) {
         vm.prank(caller);
-        return adapter.register(Adapter8004.TokenStandard.ERC721, address(token721), tokenId, "", _emptyMetadata());
+        return adapter.register(IERCAgentBindings.TokenStandard.ERC721, address(token721), tokenId, "", _emptyMetadata());
     }
 
     function _register1155(address caller, uint256 tokenId) internal returns (uint256) {
         vm.prank(caller);
-        return adapter.register(Adapter8004.TokenStandard.ERC1155, address(token1155), tokenId, "", _emptyMetadata());
+        return adapter.register(IERCAgentBindings.TokenStandard.ERC1155, address(token1155), tokenId, "", _emptyMetadata());
     }
 
     function _register6909(address caller, uint256 tokenId) internal returns (uint256) {
         vm.prank(caller);
-        return adapter.register(Adapter8004.TokenStandard.ERC6909, address(token6909), tokenId, "", _emptyMetadata());
+        return adapter.register(IERCAgentBindings.TokenStandard.ERC6909, address(token6909), tokenId, "", _emptyMetadata());
     }
 
     function _emptyMetadata() internal pure returns (IERC8004IdentityRegistry.MetadataEntry[] memory) {

@@ -8,23 +8,12 @@ import {IERC6909} from "@openzeppelin/contracts/interfaces/IERC6909.sol";
 import {Initializable} from "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
 import {OwnableUpgradeable} from "@openzeppelin/contracts-upgradeable/access/OwnableUpgradeable.sol";
 import {UUPSUpgradeable} from "@openzeppelin/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
+import {IERCAgentBindings} from "./interfaces/IERCAgentBindings.sol";
 import {IERC8004IdentityRegistry} from "./interfaces/IERC8004IdentityRegistry.sol";
 
-contract Adapter8004 is Initializable, OwnableUpgradeable, UUPSUpgradeable, IERC721Receiver {
+contract Adapter8004 is Initializable, OwnableUpgradeable, UUPSUpgradeable, IERC721Receiver, IERCAgentBindings {
     string public constant BINDING_METADATA_KEY = "agent-binding";
     bytes32 private constant BINDING_METADATA_KEY_HASH = keccak256(bytes(BINDING_METADATA_KEY));
-
-    enum TokenStandard {
-        ERC721,
-        ERC1155,
-        ERC6909
-    }
-
-    struct Binding {
-        TokenStandard standard;
-        address tokenContract;
-        uint256 tokenId;
-    }
 
     error InvalidTokenContract();
     error ReservedMetadataKey(string metadataKey);
@@ -106,10 +95,8 @@ contract Adapter8004 is Initializable, OwnableUpgradeable, UUPSUpgradeable, IERC
         // 5. Persist the immutable link from the ERC-8004 agent to the external token.
         _bindings[agentId] = Binding({standard: standard, tokenContract: tokenContract, tokenId: tokenId});
 
-        // 6. Write the canonical binding metadata into the ERC-8004 record.
-        identityRegistry.setMetadata(
-            agentId, BINDING_METADATA_KEY, encodeBindingMetadata(address(this), standard, tokenContract, tokenId)
-        );
+        // 6. Write the canonical binding metadata (binding contract address only; ERC-8217).
+        identityRegistry.setMetadata(agentId, BINDING_METADATA_KEY, encodeBindingMetadata(address(this)));
 
         // 7. Clear the default ERC-8004 wallet because registration set it to the adapter.
         identityRegistry.unsetAgentWallet(agentId);
@@ -156,19 +143,21 @@ contract Adapter8004 is Initializable, OwnableUpgradeable, UUPSUpgradeable, IERC
         emit MetadataBatchSet(agentId, length, msg.sender);
     }
 
-    function encodeBindingMetadata(
-        address bindingContract,
-        TokenStandard standard,
-        address tokenContract,
-        uint256 tokenId
-    ) public pure returns (bytes memory) {
-        // 1. Compute the compact variable-length token id encoding.
-        bytes memory compactTokenId = _encodeCompactUint(tokenId);
+    /// @notice ERC-8217 `agent-binding` value: exactly the binding contract address (`abi.encodePacked(bindingContract)`).
+    function encodeBindingMetadata(address bindingContract) public pure returns (bytes memory) {
+        return abi.encodePacked(bindingContract);
+    }
 
-        // 2. Serialize the adapter address, token standard, token contract, token id length, and compact token id bytes.
-        return abi.encodePacked(
-            bindingContract, uint8(standard), tokenContract, uint8(compactTokenId.length), compactTokenId
-        );
+    /// @notice Owner-only migration helper to rewrite legacy `agent-binding` rows into the ERC-8217 20-byte format.
+    function rewriteBindingMetadata(uint256 agentId) external onlyOwner {
+        // 1. Reject unknown agents before touching registry state.
+        Binding memory binding = _bindings[agentId];
+        if (binding.tokenContract == address(0)) {
+            revert UnknownAgent(agentId);
+        }
+
+        // 2. Rewrite the canonical metadata using the proxy address as the binding contract.
+        identityRegistry.setMetadata(agentId, BINDING_METADATA_KEY, encodeBindingMetadata(address(this)));
     }
 
     function setAgentWallet(uint256 agentId, address newWallet, uint256 deadline, bytes calldata signature) external {
@@ -187,7 +176,7 @@ contract Adapter8004 is Initializable, OwnableUpgradeable, UUPSUpgradeable, IERC
         identityRegistry.unsetAgentWallet(agentId);
     }
 
-    function bindingOf(uint256 agentId) external view returns (Binding memory) {
+    function bindingOf(uint256 agentId) external view override returns (Binding memory) {
         // 1. Load the stored binding for the requested agent.
         Binding memory binding = _bindings[agentId];
 
@@ -218,7 +207,7 @@ contract Adapter8004 is Initializable, OwnableUpgradeable, UUPSUpgradeable, IERC
         return IERC721Receiver.onERC721Received.selector;
     }
 
-    function _authorizeUpgrade(address newImplementation) internal override onlyOwner {
+    function _authorizeUpgrade(address newImplementation) internal view override onlyOwner {
         // 1. Restrict upgrades to the adapter owner.
         // 2. Accept the implementation address through UUPS validation in the inherited logic.
         newImplementation;
@@ -297,31 +286,6 @@ contract Adapter8004 is Initializable, OwnableUpgradeable, UUPSUpgradeable, IERC
             if (keccak256(bytes(metadata[i].metadataKey)) == BINDING_METADATA_KEY_HASH) {
                 revert ReservedMetadataKey(metadata[i].metadataKey);
             }
-        }
-    }
-
-    function _encodeCompactUint(uint256 value) internal pure returns (bytes memory out) {
-        // 1. Encode zero as an empty payload with length byte 0.
-        if (value == 0) {
-            return bytes("");
-        }
-
-        // 2. Count the minimum number of non-zero bytes needed to represent the value.
-        uint256 temp = value;
-        uint256 length;
-        while (temp != 0) {
-            length++;
-            temp >>= 8;
-        }
-
-        // 3. Allocate the exact output length.
-        out = new bytes(length);
-
-        // 4. Write the value big-endian so decoders can reconstruct the uint256 directly.
-        temp = value;
-        for (uint256 i = length; i > 0; --i) {
-            out[i - 1] = bytes1(uint8(temp));
-            temp >>= 8;
         }
     }
 }

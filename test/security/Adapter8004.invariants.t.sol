@@ -5,6 +5,7 @@ import {Test} from "forge-std/Test.sol";
 import {ERC1967Proxy} from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
 
 import {Adapter8004} from "../../src/Adapter8004.sol";
+import {IERCAgentBindings} from "../../src/interfaces/IERCAgentBindings.sol";
 import {IERC8004IdentityRegistry} from "../../src/interfaces/IERC8004IdentityRegistry.sol";
 
 import {MockIdentityRegistry} from "../mocks/MockIdentityRegistry.sol";
@@ -47,7 +48,7 @@ contract SecurityAdapter8004InvariantsTest is Test {
 
         vm.prank(holder);
         uint256 agentId =
-            adapter.register(Adapter8004.TokenStandard.ERC721, address(token721), tokenId, "", _emptyMetadata());
+            adapter.register(IERCAgentBindings.TokenStandard.ERC721, address(token721), tokenId, "", _emptyMetadata());
 
         // The mock (and the real registry) set agentWallet = msg.sender during
         // register; the adapter must clear it as step 7 of register.
@@ -67,9 +68,9 @@ contract SecurityAdapter8004InvariantsTest is Test {
 
         vm.prank(holder);
         uint256 agentId =
-            adapter.register(Adapter8004.TokenStandard.ERC721, address(token721), tokenId, "", _emptyMetadata());
+            adapter.register(IERCAgentBindings.TokenStandard.ERC721, address(token721), tokenId, "", _emptyMetadata());
 
-        Adapter8004.Binding memory beforeBinding = adapter.bindingOf(agentId);
+        IERCAgentBindings.Binding memory beforeBinding = adapter.bindingOf(agentId);
 
         // Exercise every non-reverting controller path and re-check the
         // binding. These calls should never touch _bindings[agentId].
@@ -85,7 +86,7 @@ contract SecurityAdapter8004InvariantsTest is Test {
         adapter.unsetAgentWallet(agentId);
         vm.stopPrank();
 
-        Adapter8004.Binding memory afterBinding = adapter.bindingOf(agentId);
+        IERCAgentBindings.Binding memory afterBinding = adapter.bindingOf(agentId);
         assertEq(uint256(afterBinding.standard), uint256(beforeBinding.standard), "standard mutated");
         assertEq(afterBinding.tokenContract, beforeBinding.tokenContract, "tokenContract mutated");
         assertEq(afterBinding.tokenId, beforeBinding.tokenId, "tokenId mutated");
@@ -93,8 +94,8 @@ contract SecurityAdapter8004InvariantsTest is Test {
 
     // ---------------------------------------------------------------------
     // MEMORY.md § 6 invariant 4 + 14: the canonical agent-binding metadata
-    // is written at register time and matches encodeBindingMetadata(...)
-    // exactly. Fuzz every field of the encoded payload.
+    // is written at register time as exactly 20 bytes (ERC-8217
+    // `abi.encodePacked(bindingContract)`).
     // ---------------------------------------------------------------------
     function testFuzzCanonicalBindingMetadataMatchesEncoder(address holder, uint256 tokenId) external {
         holder = _sanitizeHolder(holder);
@@ -102,77 +103,12 @@ contract SecurityAdapter8004InvariantsTest is Test {
 
         vm.prank(holder);
         uint256 agentId =
-            adapter.register(Adapter8004.TokenStandard.ERC721, address(token721), tokenId, "", _emptyMetadata());
+            adapter.register(IERCAgentBindings.TokenStandard.ERC721, address(token721), tokenId, "", _emptyMetadata());
 
         bytes memory stored = registry.getMetadata(agentId, adapter.BINDING_METADATA_KEY());
-        bytes memory expected = adapter.encodeBindingMetadata(
-            address(adapter), Adapter8004.TokenStandard.ERC721, address(token721), tokenId
-        );
+        bytes memory expected = adapter.encodeBindingMetadata(address(adapter));
         assertEq(stored, expected, "canonical binding metadata drift");
-    }
-
-    // ---------------------------------------------------------------------
-    // MEMORY.md § 6 invariant 14 / Task C: encodeBindingMetadata's compact
-    // uint encoder round-trips for every token-id width from 0 to 32 bytes.
-    // This is the gap the task-brief called out (off-by-one risk at the
-    // 8/16/24/32-byte boundaries).
-    // ---------------------------------------------------------------------
-    function testFuzzCompactTokenIdRoundTrip(uint256 tokenId) external view {
-        bytes memory encoded = adapter.encodeBindingMetadata(
-            address(adapter), Adapter8004.TokenStandard.ERC721, address(token721), tokenId
-        );
-
-        // Envelope layout:
-        //   20 bytes adapter | 1 byte standard | 20 bytes tokenContract
-        //   | 1 byte compact length | N bytes compact id
-        // so compact length lives at byte 41 and compact bytes start at 42.
-        assertEq(encoded.length >= 42, true, "envelope shorter than header");
-
-        uint8 compactLen = uint8(encoded[41]);
-
-        // The compact length must equal the minimal big-endian byte count
-        // of tokenId. Compute that independently here.
-        uint256 expectedLen;
-        uint256 v = tokenId;
-        while (v != 0) {
-            expectedLen++;
-            v >>= 8;
-        }
-        assertEq(uint256(compactLen), expectedLen, "compact length mismatch");
-        assertEq(encoded.length, 42 + expectedLen, "envelope length mismatch");
-
-        // Reconstruct the big-endian value from the tail and compare.
-        uint256 reconstructed;
-        for (uint256 i = 0; i < compactLen; i++) {
-            reconstructed = (reconstructed << 8) | uint8(encoded[42 + i]);
-        }
-        assertEq(reconstructed, tokenId, "round-trip failed");
-    }
-
-    // Narrow helper: assert the width boundary at 8/16/24/32 bytes
-    // explicitly, since fuzzers rarely hit them uniformly.
-    function testCompactTokenIdWidthBoundaries() external view {
-        _assertCompactLength(0, 0);
-        _assertCompactLength(1, 1);
-        _assertCompactLength(0xff, 1);
-        _assertCompactLength(0x100, 2);
-        _assertCompactLength(0xffffffffffffffff, 8); // 2^64 - 1
-        _assertCompactLength(0x10000000000000000, 9); // 2^64
-        _assertCompactLength(0xffffffffffffffffffffffffffffffff, 16); // 2^128 - 1
-        _assertCompactLength(0x100000000000000000000000000000000, 17); // 2^128
-        _assertCompactLength(0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff, 32);
-        _assertCompactLength(
-            0x0100000000000000000000000000000000000000000000000000000000000000, 32
-        ); // high byte set, low bytes zero
-    }
-
-    function _assertCompactLength(uint256 tokenId, uint256 expectedLen) internal view {
-        bytes memory encoded = adapter.encodeBindingMetadata(
-            address(adapter), Adapter8004.TokenStandard.ERC721, address(token721), tokenId
-        );
-        uint8 compactLen = uint8(encoded[41]);
-        assertEq(uint256(compactLen), expectedLen, "width boundary: length");
-        assertEq(encoded.length, 42 + expectedLen, "width boundary: envelope");
+        assertEq(stored.length, 20, "binding metadata must be 20 bytes");
     }
 
     // ---------------------------------------------------------------------
@@ -228,7 +164,7 @@ contract SecurityAdapter8004InvariantsTest is Test {
 
         token721.mint(address(this), 99);
         vm.expectRevert();
-        adapter.register(Adapter8004.TokenStandard.ERC721, address(token721), 99, "", _emptyMetadata());
+        adapter.register(IERCAgentBindings.TokenStandard.ERC721, address(token721), 99, "", _emptyMetadata());
     }
 
     // ---------------------------------------------------------------------

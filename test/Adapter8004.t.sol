@@ -4,6 +4,7 @@ pragma solidity ^0.8.24;
 import {Test} from "forge-std/Test.sol";
 import {ERC1967Proxy} from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
 import {Adapter8004} from "../src/Adapter8004.sol";
+import {IERCAgentBindings} from "../src/interfaces/IERCAgentBindings.sol";
 import {IERC8004IdentityRegistry} from "../src/interfaces/IERC8004IdentityRegistry.sol";
 import {MockIdentityRegistry} from "./mocks/MockIdentityRegistry.sol";
 import {MockERC721} from "./mocks/MockERC721.sol";
@@ -71,15 +72,14 @@ contract Adapter8004Test is Test {
 
         vm.prank(alice);
         uint256 agentId =
-            adapter.register(Adapter8004.TokenStandard.ERC721, address(token721), 1, "ipfs://agent/1", metadata);
+            adapter.register(IERCAgentBindings.TokenStandard.ERC721, address(token721), 1, "ipfs://agent/1", metadata);
 
         assertEq(registry.ownerOf(agentId), address(adapter));
         assertEq(registry.tokenURI(agentId), "ipfs://agent/1");
         assertEq(string(registry.getMetadata(agentId, "name")), "alpha");
         assertEq(registry.getAgentWallet(agentId), address(0));
         assertEq(
-            registry.getMetadata(agentId, adapter.BINDING_METADATA_KEY()),
-            adapter.encodeBindingMetadata(address(adapter), Adapter8004.TokenStandard.ERC721, address(token721), 1)
+            registry.getMetadata(agentId, adapter.BINDING_METADATA_KEY()), adapter.encodeBindingMetadata(address(adapter))
         );
     }
 
@@ -138,7 +138,7 @@ contract Adapter8004Test is Test {
     function testCannotRegisterWithoutCurrentTokenControl() external {
         vm.prank(eve);
         vm.expectRevert(abi.encodeWithSelector(Adapter8004.NotController.selector, eve, type(uint256).max));
-        adapter.register(Adapter8004.TokenStandard.ERC721, address(token721), 1, "", _emptyMetadata());
+        adapter.register(IERCAgentBindings.TokenStandard.ERC721, address(token721), 1, "", _emptyMetadata());
     }
 
     function testSameTokenCanRegisterMultipleAgents() external {
@@ -146,13 +146,13 @@ contract Adapter8004Test is Test {
 
         vm.prank(alice);
         uint256 secondAgentId =
-            adapter.register(Adapter8004.TokenStandard.ERC721, address(token721), 1, "", _emptyMetadata());
+            adapter.register(IERCAgentBindings.TokenStandard.ERC721, address(token721), 1, "", _emptyMetadata());
 
         assertEq(firstAgentId, 0);
         assertEq(secondAgentId, 1);
 
-        Adapter8004.Binding memory firstBinding = adapter.bindingOf(firstAgentId);
-        Adapter8004.Binding memory secondBinding = adapter.bindingOf(secondAgentId);
+        IERCAgentBindings.Binding memory firstBinding = adapter.bindingOf(firstAgentId);
+        IERCAgentBindings.Binding memory secondBinding = adapter.bindingOf(secondAgentId);
         assertEq(firstBinding.tokenContract, address(token721));
         assertEq(secondBinding.tokenContract, address(token721));
         assertEq(firstBinding.tokenId, 1);
@@ -173,25 +173,56 @@ contract Adapter8004Test is Test {
         assertEq(string(registry.getMetadata(agentId, "b")), "2");
     }
 
-    function testEncodeBindingMetadataUsesCompactTokenIdLengthByte() external view {
-        bytes memory encoded =
-            adapter.encodeBindingMetadata(address(adapter), Adapter8004.TokenStandard.ERC721, address(token721), 0x1234);
-        bytes memory expected = abi.encodePacked(address(adapter), uint8(0), address(token721), uint8(2), hex"1234");
-        assertEq(encoded, expected);
+    function testEncodeBindingMetadataIsTwentyByteAddress() external view {
+        address binding = address(adapter);
+        bytes memory encoded = adapter.encodeBindingMetadata(binding);
+        assertEq(encoded.length, 20);
+        assertEq(encoded, abi.encodePacked(binding));
     }
 
-    function testEncodeBindingMetadataEncodesZeroTokenIdWithZeroLength() external view {
-        bytes memory encoded =
-            adapter.encodeBindingMetadata(address(adapter), Adapter8004.TokenStandard.ERC721, address(token721), 0);
-        bytes memory expected = abi.encodePacked(address(adapter), uint8(0), address(token721), uint8(0));
-        assertEq(encoded, expected);
+    function testBindingVerifierRoundTripUsesStoredBindingContract() external {
+        uint256 agentId = _register721(alice, 1);
+
+        bytes memory stored = registry.getMetadata(agentId, adapter.BINDING_METADATA_KEY());
+        assertEq(stored.length, 20);
+
+        address bindingContract = address(bytes20(stored));
+        IERCAgentBindings.Binding memory binding = IERCAgentBindings(bindingContract).bindingOf(agentId);
+
+        assertEq(uint256(binding.standard), uint256(IERCAgentBindings.TokenStandard.ERC721));
+        assertEq(binding.tokenContract, address(token721));
+        assertEq(binding.tokenId, 1);
     }
 
-    function testEncodeBindingMetadataUsesEnumByteFor1155() external view {
-        bytes memory encoded =
-            adapter.encodeBindingMetadata(address(adapter), Adapter8004.TokenStandard.ERC1155, address(token1155), 5);
-        bytes memory expected = abi.encodePacked(address(adapter), uint8(1), address(token1155), uint8(1), hex"05");
-        assertEq(encoded, expected);
+    function testAdapterImplementsIERCAgentBindingsInterface() external {
+        uint256 agentId = _register721(alice, 1);
+
+        IERCAgentBindings bindings = IERCAgentBindings(address(adapter));
+        IERCAgentBindings.Binding memory binding = bindings.bindingOf(agentId);
+
+        assertEq(uint256(binding.standard), uint256(IERCAgentBindings.TokenStandard.ERC721));
+        assertEq(binding.tokenContract, address(token721));
+        assertEq(binding.tokenId, 1);
+    }
+
+    function testRewriteBindingMetadataRewritesLegacyPayloadToTwentyBytes() external {
+        uint256 agentId = _register721(alice, 1);
+        string memory key = adapter.BINDING_METADATA_KEY();
+        bytes memory legacy = _encodeLegacyBindingMetadata(
+            address(adapter), IERCAgentBindings.TokenStandard.ERC721, address(token721), 1
+        );
+        assertGt(legacy.length, 20);
+
+        vm.prank(address(adapter));
+        registry.setMetadata(agentId, key, legacy);
+        assertEq(registry.getMetadata(agentId, key), legacy);
+
+        vm.prank(admin);
+        adapter.rewriteBindingMetadata(agentId);
+
+        bytes memory stored = registry.getMetadata(agentId, key);
+        assertEq(stored.length, 20);
+        assertEq(stored, abi.encodePacked(address(adapter)));
     }
 
     function testRegisterRejectsReservedBindingMetadataKey() external {
@@ -205,7 +236,7 @@ contract Adapter8004Test is Test {
             abi.encodeWithSelector(Adapter8004.ReservedMetadataKey.selector, adapter.BINDING_METADATA_KEY())
         );
         vm.prank(alice);
-        adapter.register(Adapter8004.TokenStandard.ERC721, address(token721), 1, "", metadata);
+        adapter.register(IERCAgentBindings.TokenStandard.ERC721, address(token721), 1, "", metadata);
     }
 
     function testSetMetadataRejectsReservedBindingMetadataKey() external {
@@ -262,7 +293,7 @@ contract Adapter8004Test is Test {
 
         vm.prank(alice);
         uint256 agentId = adapter.register(
-            Adapter8004.TokenStandard.ERC721, address(token721), 1, "ipfs://agent/new", _emptyMetadata()
+            IERCAgentBindings.TokenStandard.ERC721, address(token721), 1, "ipfs://agent/new", _emptyMetadata()
         );
 
         assertEq(registry2.ownerOf(agentId), address(adapter));
@@ -296,21 +327,51 @@ contract Adapter8004Test is Test {
 
     function _register721(address caller, uint256 tokenId) internal returns (uint256) {
         vm.prank(caller);
-        return adapter.register(Adapter8004.TokenStandard.ERC721, address(token721), tokenId, "", _emptyMetadata());
+        return adapter.register(IERCAgentBindings.TokenStandard.ERC721, address(token721), tokenId, "", _emptyMetadata());
     }
 
     function _register1155(address caller, uint256 tokenId) internal returns (uint256) {
         vm.prank(caller);
-        return adapter.register(Adapter8004.TokenStandard.ERC1155, address(token1155), tokenId, "", _emptyMetadata());
+        return adapter.register(IERCAgentBindings.TokenStandard.ERC1155, address(token1155), tokenId, "", _emptyMetadata());
     }
 
     function _register6909(address caller, uint256 tokenId) internal returns (uint256) {
         vm.prank(caller);
-        return adapter.register(Adapter8004.TokenStandard.ERC6909, address(token6909), tokenId, "", _emptyMetadata());
+        return adapter.register(IERCAgentBindings.TokenStandard.ERC6909, address(token6909), tokenId, "", _emptyMetadata());
     }
 
     function _emptyMetadata() internal pure returns (IERC8004IdentityRegistry.MetadataEntry[] memory metadata) {
         metadata = new IERC8004IdentityRegistry.MetadataEntry[](0);
+    }
+
+    function _encodeLegacyBindingMetadata(
+        address bindingContract,
+        IERCAgentBindings.TokenStandard standard,
+        address tokenContract,
+        uint256 tokenId
+    ) internal pure returns (bytes memory) {
+        bytes memory compactTokenId = _encodeCompactUint(tokenId);
+        return abi.encodePacked(bindingContract, uint8(standard), tokenContract, uint8(compactTokenId.length), compactTokenId);
+    }
+
+    function _encodeCompactUint(uint256 value) internal pure returns (bytes memory out) {
+        if (value == 0) {
+            return bytes("");
+        }
+
+        uint256 temp = value;
+        uint256 length;
+        while (temp != 0) {
+            length++;
+            temp >>= 8;
+        }
+
+        out = new bytes(length);
+        temp = value;
+        for (uint256 i = length; i > 0; --i) {
+            out[i - 1] = bytes1(uint8(temp));
+            temp >>= 8;
+        }
     }
 
     function _signAgentWallet(uint256 agentId, address newWallet, address owner, uint256 deadline, uint256 signerPk)
