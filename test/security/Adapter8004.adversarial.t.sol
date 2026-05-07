@@ -139,9 +139,13 @@ contract AdversarialAdapter8004Test is Test {
         mal.setOwner(1, alice);
         mal.setReentry(
             address(adapter),
-            abi.encodeCall(
-                Adapter8004.register,
-                (IERCAgentBindings.TokenStandard.ERC721, address(mal), 2, "", new IERC8004IdentityRegistry.MetadataEntry[](0))
+            abi.encodeWithSignature(
+                "register(uint8,address,uint256,string,(string,bytes)[])",
+                IERCAgentBindings.TokenStandard.ERC721,
+                address(mal),
+                2,
+                "",
+                new IERC8004IdentityRegistry.MetadataEntry[](0)
             )
         );
 

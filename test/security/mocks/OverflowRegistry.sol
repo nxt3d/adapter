@@ -11,6 +11,14 @@ contract OverflowRegistry is IERC8004IdentityRegistry {
         return type(uint256).max;
     }
 
+    function register(string memory) external pure returns (uint256) {
+        return type(uint256).max;
+    }
+
+    function register() external pure returns (uint256) {
+        return type(uint256).max;
+    }
+
     function setMetadata(uint256, string memory, bytes memory) external {}
     function setAgentURI(uint256, string calldata) external {}
     function setAgentWallet(uint256, address, uint256, bytes calldata) external {}

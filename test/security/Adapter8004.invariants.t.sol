@@ -220,6 +220,14 @@ contract FailingMetadataRegistry is IERC8004IdentityRegistry {
         _owners[agentId] = msg.sender;
     }
 
+    function register(string memory) external pure override returns (uint256) {
+        revert("not used");
+    }
+
+    function register() external pure override returns (uint256) {
+        revert("not used");
+    }
+
     function setMetadata(uint256, string memory, bytes memory) external pure override {
         revert("metadata write disabled");
     }

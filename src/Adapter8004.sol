@@ -9,9 +9,19 @@ import {Initializable} from "@openzeppelin/contracts-upgradeable/proxy/utils/Ini
 import {OwnableUpgradeable} from "@openzeppelin/contracts-upgradeable/access/OwnableUpgradeable.sol";
 import {UUPSUpgradeable} from "@openzeppelin/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
 import {IERCAgentBindings} from "./interfaces/IERCAgentBindings.sol";
+import {IERC8004AdapterRegistration} from "./interfaces/IERC8004AdapterRegistration.sol";
+import {IERC8004IdentityRecord} from "./interfaces/IERC8004IdentityRecord.sol";
 import {IERC8004IdentityRegistry} from "./interfaces/IERC8004IdentityRegistry.sol";
 
-contract Adapter8004 is Initializable, OwnableUpgradeable, UUPSUpgradeable, IERC721Receiver, IERCAgentBindings {
+contract Adapter8004 is
+    Initializable,
+    OwnableUpgradeable,
+    UUPSUpgradeable,
+    IERC721Receiver,
+    IERCAgentBindings,
+    IERC8004IdentityRecord,
+    IERC8004AdapterRegistration
+{
     string public constant BINDING_METADATA_KEY = "agent-binding";
     bytes32 private constant BINDING_METADATA_KEY_HASH = keccak256(bytes(BINDING_METADATA_KEY));
 
@@ -76,8 +86,8 @@ contract Adapter8004 is Initializable, OwnableUpgradeable, UUPSUpgradeable, IERC
         address tokenContract,
         uint256 tokenId,
         string calldata agentURI,
-        IERC8004IdentityRegistry.MetadataEntry[] calldata metadata
-    ) external returns (uint256 agentId) {
+        IERC8004IdentityRegistry.MetadataEntry[] memory metadata
+    ) public returns (uint256 agentId) {
         // 1. Reject an unusable external token contract address.
         if (tokenContract == address(0)) {
             revert InvalidTokenContract();
@@ -90,7 +100,13 @@ contract Adapter8004 is Initializable, OwnableUpgradeable, UUPSUpgradeable, IERC
         _requireNoReservedBindingKey(metadata);
 
         // 4. Register the ERC-8004 identity so the adapter becomes the registry owner.
-        agentId = identityRegistry.register(agentURI, metadata);
+        //    Skip the metadata-array overload when there is nothing to write — saves the
+        //    empty-array calldata + memory copy on the registry side.
+        if (metadata.length == 0) {
+            agentId = identityRegistry.register(agentURI);
+        } else {
+            agentId = identityRegistry.register(agentURI, metadata);
+        }
 
         // 5. Persist the immutable link from the ERC-8004 agent to the external token.
         _bindings[agentId] = Binding({standard: standard, tokenContract: tokenContract, tokenId: tokenId});
@@ -105,6 +121,35 @@ contract Adapter8004 is Initializable, OwnableUpgradeable, UUPSUpgradeable, IERC
         emit AgentBound(agentId, standard, tokenContract, tokenId, msg.sender);
     }
 
+    function register(
+        TokenStandard standard,
+        address tokenContract,
+        uint256 tokenId,
+        string calldata agentURI
+    ) external returns (uint256 agentId) {
+        return register(standard, tokenContract, tokenId, agentURI, new IERC8004IdentityRegistry.MetadataEntry[](0));
+    }
+
+    function getMetadata(uint256 agentId, string memory metadataKey)
+        external
+        view
+        returns (bytes memory)
+    {
+        return identityRegistry.getMetadata(agentId, metadataKey);
+    }
+
+    function getAgentWallet(uint256 agentId) external view returns (address) {
+        return identityRegistry.getAgentWallet(agentId);
+    }
+
+    function ownerOf(uint256 agentId) external view returns (address) {
+        return identityRegistry.ownerOf(agentId);
+    }
+
+    function tokenURI(uint256 agentId) external view returns (string memory) {
+        return identityRegistry.tokenURI(agentId);
+    }
+
     function setAgentURI(uint256 agentId, string calldata newURI) external {
         // 1. Confirm the caller currently controls the bound token.
         _requireController(agentId, msg.sender);
@@ -113,7 +158,7 @@ contract Adapter8004 is Initializable, OwnableUpgradeable, UUPSUpgradeable, IERC
         identityRegistry.setAgentURI(agentId, newURI);
     }
 
-    function setMetadata(uint256 agentId, string calldata metadataKey, bytes calldata metadataValue) external {
+    function setMetadata(uint256 agentId, string memory metadataKey, bytes memory metadataValue) external {
         // 1. Confirm the caller currently controls the bound token.
         _requireController(agentId, msg.sender);
 
@@ -155,7 +200,9 @@ contract Adapter8004 is Initializable, OwnableUpgradeable, UUPSUpgradeable, IERC
         identityRegistry.setMetadata(agentId, BINDING_METADATA_KEY, abi.encodePacked(address(this)));
     }
 
-    function setAgentWallet(uint256 agentId, address newWallet, uint256 deadline, bytes calldata signature) external {
+    function setAgentWallet(uint256 agentId, address newWallet, uint256 deadline, bytes calldata signature)
+        external
+    {
         // 1. Confirm the caller currently controls the bound token.
         _requireController(agentId, msg.sender);
 
@@ -171,7 +218,7 @@ contract Adapter8004 is Initializable, OwnableUpgradeable, UUPSUpgradeable, IERC
         identityRegistry.unsetAgentWallet(agentId);
     }
 
-    function bindingOf(uint256 agentId) external view override returns (Binding memory) {
+    function bindingOf(uint256 agentId) external view returns (Binding memory) {
         // 1. Load the stored binding for the requested agent.
         Binding memory binding = _bindings[agentId];
 
@@ -197,7 +244,7 @@ contract Adapter8004 is Initializable, OwnableUpgradeable, UUPSUpgradeable, IERC
         return _hasBindingControl(binding, account);
     }
 
-    function onERC721Received(address, address, uint256, bytes calldata) external pure override returns (bytes4) {
+    function onERC721Received(address, address, uint256, bytes calldata) external pure returns (bytes4) {
         // 1. Return the standard receiver selector so safe ERC-721 transfers to the adapter succeed.
         return IERC721Receiver.onERC721Received.selector;
     }
@@ -274,7 +321,7 @@ contract Adapter8004 is Initializable, OwnableUpgradeable, UUPSUpgradeable, IERC
         }
     }
 
-    function _requireNoReservedBindingKey(IERC8004IdentityRegistry.MetadataEntry[] calldata metadata) internal pure {
+    function _requireNoReservedBindingKey(IERC8004IdentityRegistry.MetadataEntry[] memory metadata) internal pure {
         // 1. Scan user-supplied metadata and reject any entry that targets the canonical binding metadata slot.
         uint256 length = metadata.length;
         for (uint256 i; i < length; ++i) {

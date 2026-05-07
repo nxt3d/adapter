@@ -79,6 +79,12 @@ contract Adapter8004Test is Test {
         assertEq(string(registry.getMetadata(agentId, "name")), "alpha");
         assertEq(registry.getAgentWallet(agentId), address(0));
         assertEq(registry.getMetadata(agentId, adapter.BINDING_METADATA_KEY()), abi.encodePacked(address(adapter)));
+
+        assertEq(adapter.ownerOf(agentId), registry.ownerOf(agentId));
+        assertEq(adapter.tokenURI(agentId), registry.tokenURI(agentId));
+        assertEq(adapter.getMetadata(agentId, "name"), registry.getMetadata(agentId, "name"));
+        assertEq(adapter.getAgentWallet(agentId), registry.getAgentWallet(agentId));
+        assertEq(adapter.getMetadata(agentId, adapter.BINDING_METADATA_KEY()), registry.getMetadata(agentId, adapter.BINDING_METADATA_KEY()));
     }
 
     function test721ControllerCanUpdateRegistryFields() external {
@@ -137,6 +143,28 @@ contract Adapter8004Test is Test {
         vm.prank(eve);
         vm.expectRevert(abi.encodeWithSelector(Adapter8004.NotController.selector, eve, type(uint256).max));
         adapter.register(IERCAgentBindings.TokenStandard.ERC721, address(token721), 1, "", _emptyMetadata());
+    }
+
+    function testRegisterNoMetadataOverloadProducesIdenticalBinding() external {
+        vm.prank(alice);
+        uint256 agentId =
+            adapter.register(IERCAgentBindings.TokenStandard.ERC721, address(token721), 1, "ipfs://agent/1");
+
+        assertEq(registry.ownerOf(agentId), address(adapter));
+        assertEq(registry.tokenURI(agentId), "ipfs://agent/1");
+        assertEq(registry.getAgentWallet(agentId), address(0));
+        assertEq(registry.getMetadata(agentId, adapter.BINDING_METADATA_KEY()), abi.encodePacked(address(adapter)));
+
+        IERCAgentBindings.Binding memory binding = adapter.bindingOf(agentId);
+        assertEq(uint8(binding.standard), uint8(IERCAgentBindings.TokenStandard.ERC721));
+        assertEq(binding.tokenContract, address(token721));
+        assertEq(binding.tokenId, 1);
+    }
+
+    function testRegisterNoMetadataOverloadEnforcesTokenControl() external {
+        vm.prank(eve);
+        vm.expectRevert(abi.encodeWithSelector(Adapter8004.NotController.selector, eve, type(uint256).max));
+        adapter.register(IERCAgentBindings.TokenStandard.ERC721, address(token721), 1, "");
     }
 
     function testSameTokenCanRegisterMultipleAgents() external {

@@ -7,6 +7,7 @@ import {IERC721} from "@openzeppelin/contracts/token/ERC721/IERC721.sol";
 import {EIP712} from "@openzeppelin/contracts/utils/cryptography/EIP712.sol";
 import {ECDSA} from "@openzeppelin/contracts/utils/cryptography/ECDSA.sol";
 import {IERC1271} from "@openzeppelin/contracts/interfaces/IERC1271.sol";
+import {IERC8004IdentityRecord} from "../../src/interfaces/IERC8004IdentityRecord.sol";
 import {IERC8004IdentityRegistry} from "../../src/interfaces/IERC8004IdentityRegistry.sol";
 
 contract MockIdentityRegistry is ERC721URIStorage, EIP712, IERC8004IdentityRegistry {
@@ -28,7 +29,7 @@ contract MockIdentityRegistry is ERC721URIStorage, EIP712, IERC8004IdentityRegis
     constructor() ERC721("AgentIdentity", "AGENT") EIP712("ERC8004IdentityRegistry", "1") {}
 
     function register(string memory agentURI, MetadataEntry[] memory metadata)
-        external
+        public
         override
         returns (uint256 agentId)
     {
@@ -53,6 +54,14 @@ contract MockIdentityRegistry is ERC721URIStorage, EIP712, IERC8004IdentityRegis
         }
     }
 
+    function register(string memory agentURI) external override returns (uint256 agentId) {
+        return register(agentURI, new MetadataEntry[](0));
+    }
+
+    function register() external override returns (uint256 agentId) {
+        return register("", new MetadataEntry[](0));
+    }
+
     function getMetadata(uint256 agentId, string memory metadataKey) external view override returns (bytes memory) {
         return _metadata[agentId][metadataKey];
     }
@@ -60,7 +69,7 @@ contract MockIdentityRegistry is ERC721URIStorage, EIP712, IERC8004IdentityRegis
     function ownerOf(uint256 agentId)
         public
         view
-        override(ERC721, IERC721, IERC8004IdentityRegistry)
+        override(ERC721, IERC721, IERC8004IdentityRecord)
         returns (address)
     {
         return super.ownerOf(agentId);
@@ -69,7 +78,7 @@ contract MockIdentityRegistry is ERC721URIStorage, EIP712, IERC8004IdentityRegis
     function tokenURI(uint256 agentId)
         public
         view
-        override(ERC721URIStorage, IERC8004IdentityRegistry)
+        override(ERC721URIStorage, IERC8004IdentityRecord)
         returns (string memory)
     {
         return super.tokenURI(agentId);
