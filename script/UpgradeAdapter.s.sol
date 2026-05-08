@@ -7,7 +7,7 @@ import {Adapter8004} from "../src/Adapter8004.sol";
 contract UpgradeAdapterScript is Script {
     function run() external returns (address proxy, address implementation) {
         proxy = vm.envAddress("ADAPTER_PROXY_ADDRESS");
-        uint256 ownerKey = vm.envUint("OWNER_PRIVATE_KEY");
+        uint256 ownerKey = vm.envUint("DEPLOYER_PRIVATE_KEY");
 
         vm.startBroadcast(ownerKey);
 
