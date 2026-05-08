@@ -68,63 +68,6 @@ Pre-upgrade audit (executed 2026-04-30): zero `AgentBound` events on all three p
 
 Storage layout was identical before and after the upgrade (`forge inspect Adapter8004 storage-layout`). The struct moved from contract scope to interface scope but the slot order and field types were unchanged.
 
-## 2026-05-08 UTC Base ERC-8004 Coverage Upgrade
-
-- Date (UTC): `2026-05-08 00:34:02 UTC`
-- Network: Base mainnet (chainId `8453`)
-- Proxy: `0x270d25D2c59A8bcA1B0f40ad95fF7806c0025c27`
-- OLD implementation: `0xcdf4c93db79876928b155349a3b71962b2f94424`
-- NEW implementation: `0x7Cdba6F5f1c1214E28cba57dbAdF72D810838cf2`
-- New implementation deployment tx: `0xd17c6e7d9c133080f14eccffe6837fac532704054b8dddcb2eb814aa2ccfe137`
-- Broadcast `upgradeToAndCall` tx hash: `0x5beb7e767daef8aa043b2d7a89a55aa6ebb8833b6e0a10220d60644a3ca57ee8`
-- Verification URL: `https://basescan.org/address/0x7cdba6f5f1c1214e28cba57dbadf72d810838cf2`
-- Storage-layout verdict: identical SHA-256 `61f0912c13f31c8d66370291b3abb2ac9223f70d38074df39f6dc88114382f72`
-- Gas spent: `2,196,108` gas total (`0.0000122982048 ETH` at `5,600,000` wei effective gas price)
-- Block number: `45705504`
-- Broadcast artifact: [`broadcast/UpgradeAdapter.s.sol/8453/run-latest.json`](/Users/nxt3d/projects/adapter/broadcast/UpgradeAdapter.s.sol/8453/run-latest.json)
-- Post-upgrade verification:
-  - `cast implementation` returned `0x7cdba6f5f1c1214e28cba57dbadf72d810838cf2`
-  - Direct read of the canonical EIP-1967 implementation slot `0x360894a13ba1a3210667c828492db98dca3e2076cc3735a920a3ca505d382bbc` returned `0x0000000000000000000000007cdba6f5f1c1214e28cba57dbadf72d810838cf2`
-- Notes: ERC-8004 interface coverage + register convenience overload (commit `f428f43` + script fix `c9879a6`)
-
-## 2026-05-08 UTC Sepolia ERC-8004 Coverage Upgrade
-
-- Date (UTC): `2026-05-08 00:50:36 UTC`
-- Network: Sepolia testnet (chainId `11155111`)
-- Proxy: `0x7621630cB63a73a194f45A3E6801B8C6A7eC2f92`
-- OLD implementation: `0x03fC1F8D8485a36Ff2e0162B28499f18dC3AeDb4`
-- NEW implementation: `0xdf8a3d51526B9a77B82d9295057e1907A916811f`
-- New implementation deployment tx: `0xf6d5048902555fc763ceeb54e5fb461fc26739dc621899bf1e001caf0a36ab6f`
-- Broadcast `upgradeToAndCall` tx hash: `0xad37b8eca50436a87d574f19f505c6ae20ec7f1362e03ceda00cbf67b1d2f60e`
-- Verification URL: `https://sepolia.etherscan.io/address/0xdf8a3d51526b9a77b82d9295057e1907a916811f`
-- Storage-layout verdict: `forge inspect Adapter8004 storage-layout` produced valid layout output; Base deployment already proved layout identity for commits `f428f43` + `c9879a6`
-- Gas spent: `2,196,108` gas total (`0.000002196171687132 ETH` at `1,000,029` wei effective gas price)
-- Block number: `10811062`
-- Broadcast artifact: [`broadcast/UpgradeAdapter.s.sol/11155111/run-latest.json`](/Users/nxt3d/projects/adapter/broadcast/UpgradeAdapter.s.sol/11155111/run-latest.json)
-- Post-upgrade verification:
-  - `cast implementation` returned `0xdf8a3d51526b9a77b82d9295057e1907a916811f`
-  - Direct read of the canonical EIP-1967 implementation slot `0x360894a13ba1a3210667c828492db98dca3e2076cc3735a920a3ca505d382bbc` returned `0x000000000000000000000000df8a3d51526b9a77b82d9295057e1907a916811f`
-- Notes: ERC-8004 interface coverage + register convenience overload (commit `f428f43` + script fix `c9879a6`)
-
-## 2026-05-08 UTC Ethereum Mainnet ERC-8004 Coverage Upgrade
-
-- Date (UTC): `2026-05-08 01:15:38 UTC`
-- Network: Ethereum mainnet (chainId `1`)
-- Proxy: `0xde152AfB7db5373F34876E1499fbD893A82dD336`
-- OLD implementation: `0xcdefff9eafcfa28be798d1c1b1c8d731087d1ce4`
-- NEW implementation: `0x445229facce32c7De3795c863032C64cC8b79213`
-- New implementation deployment tx: `0x5bdb4a952a030bdbb758d7a33f1a3f44d96c8301c01fab9bc3f6a6348d6e007e`
-- Broadcast `upgradeToAndCall` tx hash: `0x2c6562bf4c1112e975225171732291b5a157302caaaff8b2cd3604c4a60ec44b`
-- Verification URL: `https://etherscan.io/address/0x445229facce32c7de3795c863032c64cc8b79213`
-- Storage-layout verdict: Base deployment already proved layout identity for commits `f428f43` + `c9879a6`
-- Gas spent: `2,196,108` gas total (`0.000262459241392876 ETH` actual paid)
-- Block number: `25046978`
-- Broadcast artifact: [`broadcast/UpgradeAdapter.s.sol/1/run-latest.json`](/Users/nxt3d/projects/adapter/broadcast/UpgradeAdapter.s.sol/1/run-latest.json)
-- Post-upgrade verification:
-  - `cast implementation` returned `0x445229facce32c7de3795c863032c64cc8b79213`
-  - Direct read of the canonical EIP-1967 implementation slot `0x360894a13ba1a3210667c828492db98dca3e2076cc3735a920a3ca505d382bbc` returned `0x000000000000000000000000445229facce32c7de3795c863032c64cc8b79213`
-- Notes: ERC-8004 interface coverage + register convenience overload (commit `f428f43` + `c9879a6`)
-
 Off-chain readers that previously decoded the multi-field packed metadata must switch to:
 
 1. Read `getMetadata(agentId, "agent-binding")` from the registry.
