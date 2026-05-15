@@ -93,9 +93,11 @@ Adapter implementation addresses:
 - Base: `0x9DB9d78E1BB45604Fbfe30FaE123B152FA10de2d`
 - Sepolia: `0x5Ced539aE5Fe67183a2bA4E984F92D57dFB3bd49`
 
-Admin:
+Admin (Safe v1.4.1 multisig, same address on all three chains):
 
-- `0xF8e03bd4436371E0e2F7C02E529b2172fe72b4EF`
+- `0x03302Df40186D9B85faEA4fbb6cC5da028B23149`
+
+Previously held by EOA `0xF8e03bd4436371E0e2F7C02E529b2172fe72b4EF` until the 2026-05-15 transfer (see [`deployments/2026-05-15-ownership-transfer-to-safe-report.md`](./deployments/2026-05-15-ownership-transfer-to-safe-report.md)).
 
 Users and integrators should interact with the proxy addresses, not the implementation addresses.
 
