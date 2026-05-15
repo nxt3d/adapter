@@ -66,12 +66,7 @@ contract MockIdentityRegistry is ERC721URIStorage, EIP712, IERC8004IdentityRegis
         return _metadata[agentId][metadataKey];
     }
 
-    function ownerOf(uint256 agentId)
-        public
-        view
-        override(ERC721, IERC721, IERC8004IdentityRecord)
-        returns (address)
-    {
+    function ownerOf(uint256 agentId) public view override(ERC721, IERC721, IERC8004IdentityRecord) returns (address) {
         return super.ownerOf(agentId);
     }
 

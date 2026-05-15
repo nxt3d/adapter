@@ -2,8 +2,10 @@
 pragma solidity ^0.8.24;
 
 import {Test} from "forge-std/Test.sol";
+import {Vm} from "forge-std/Vm.sol";
 import {ERC1967Proxy} from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
 import {Adapter8004} from "../src/Adapter8004.sol";
+import {IERC8004AdapterCounterfactual} from "../src/interfaces/IERC8004AdapterCounterfactual.sol";
 import {IERCAgentBindings} from "../src/interfaces/IERCAgentBindings.sol";
 import {IERC8004IdentityRegistry} from "../src/interfaces/IERC8004IdentityRegistry.sol";
 import {MockIdentityRegistry} from "./mocks/MockIdentityRegistry.sol";
@@ -84,7 +86,10 @@ contract Adapter8004Test is Test {
         assertEq(adapter.tokenURI(agentId), registry.tokenURI(agentId));
         assertEq(adapter.getMetadata(agentId, "name"), registry.getMetadata(agentId, "name"));
         assertEq(adapter.getAgentWallet(agentId), registry.getAgentWallet(agentId));
-        assertEq(adapter.getMetadata(agentId, adapter.BINDING_METADATA_KEY()), registry.getMetadata(agentId, adapter.BINDING_METADATA_KEY()));
+        assertEq(
+            adapter.getMetadata(agentId, adapter.BINDING_METADATA_KEY()),
+            registry.getMetadata(agentId, adapter.BINDING_METADATA_KEY())
+        );
     }
 
     function test721ControllerCanUpdateRegistryFields() external {
@@ -234,9 +239,8 @@ contract Adapter8004Test is Test {
     function testRewriteBindingMetadataRewritesLegacyPayloadToTwentyBytes() external {
         uint256 agentId = _register721(alice, 1);
         string memory key = adapter.BINDING_METADATA_KEY();
-        bytes memory legacy = _encodeLegacyBindingMetadata(
-            address(adapter), IERCAgentBindings.TokenStandard.ERC721, address(token721), 1
-        );
+        bytes memory legacy =
+            _encodeLegacyBindingMetadata(address(adapter), IERCAgentBindings.TokenStandard.ERC721, address(token721), 1);
         assertGt(legacy.length, 20);
 
         vm.prank(address(adapter));
@@ -290,6 +294,118 @@ contract Adapter8004Test is Test {
         adapter.setMetadataBatch(agentId, metadata);
     }
 
+    function testSetAgentURIEmitsAdapterEvent() external {
+        uint256 agentId = _register721(alice, 1);
+
+        vm.recordLogs();
+        vm.prank(alice);
+        adapter.setAgentURI(agentId, "ipfs://agent/updated");
+
+        Vm.Log[] memory logs = vm.getRecordedLogs();
+        bytes32 topic = keccak256("AgentURISet(uint256,string,address)");
+        uint256 matches;
+        for (uint256 i; i < logs.length; ++i) {
+            if (logs[i].emitter != address(adapter) || logs[i].topics.length == 0) continue;
+            if (logs[i].topics[0] == topic) {
+                assertEq(logs[i].topics[1], bytes32(agentId));
+                assertEq(logs[i].topics[2], bytes32(uint256(uint160(alice))));
+                assertEq(abi.decode(logs[i].data, (string)), "ipfs://agent/updated");
+                ++matches;
+            }
+        }
+        assertEq(matches, 1, "AgentURISet must fire exactly once from the adapter");
+    }
+
+    function testSetMetadataEmitsAdapterEvent() external {
+        uint256 agentId = _register721(alice, 1);
+
+        vm.recordLogs();
+        vm.prank(alice);
+        adapter.setMetadata(agentId, "description", bytes("hello"));
+
+        Vm.Log[] memory logs = vm.getRecordedLogs();
+        bytes32 topic = keccak256("MetadataSet(uint256,string,bytes,address)");
+        uint256 matches;
+        for (uint256 i; i < logs.length; ++i) {
+            if (logs[i].emitter != address(adapter) || logs[i].topics.length == 0) continue;
+            if (logs[i].topics[0] == topic) {
+                assertEq(logs[i].topics[1], bytes32(agentId));
+                assertEq(logs[i].topics[2], bytes32(uint256(uint160(alice))));
+                (string memory key, bytes memory value) = abi.decode(logs[i].data, (string, bytes));
+                assertEq(key, "description");
+                assertEq(value, bytes("hello"));
+                ++matches;
+            }
+        }
+        assertEq(matches, 1, "MetadataSet must fire exactly once from the adapter");
+    }
+
+    function testSetAgentWalletEmitsAdapterEvent() external {
+        uint256 agentId = _register721(alice, 1);
+        uint256 deadline = block.timestamp + 4 minutes;
+        bytes memory signature = _signAgentWallet(agentId, wallet, address(adapter), deadline, walletPk);
+
+        vm.recordLogs();
+        vm.prank(alice);
+        adapter.setAgentWallet(agentId, wallet, deadline, signature);
+
+        Vm.Log[] memory logs = vm.getRecordedLogs();
+        bytes32 topic = keccak256("AgentWalletSet(uint256,address,address)");
+        uint256 matches;
+        for (uint256 i; i < logs.length; ++i) {
+            if (logs[i].emitter != address(adapter) || logs[i].topics.length == 0) continue;
+            if (logs[i].topics[0] == topic) {
+                assertEq(logs[i].topics[1], bytes32(agentId));
+                assertEq(logs[i].topics[2], bytes32(uint256(uint160(wallet))));
+                assertEq(logs[i].topics[3], bytes32(uint256(uint160(alice))));
+                ++matches;
+            }
+        }
+        assertEq(matches, 1, "AgentWalletSet must fire exactly once from the adapter");
+    }
+
+    function testUnsetAgentWalletEmitsAdapterEvent() external {
+        uint256 agentId = _register721(alice, 1);
+
+        vm.recordLogs();
+        vm.prank(alice);
+        adapter.unsetAgentWallet(agentId);
+
+        Vm.Log[] memory logs = vm.getRecordedLogs();
+        bytes32 topic = keccak256("AgentWalletUnset(uint256,address)");
+        uint256 matches;
+        for (uint256 i; i < logs.length; ++i) {
+            if (logs[i].emitter != address(adapter) || logs[i].topics.length == 0) continue;
+            if (logs[i].topics[0] == topic) {
+                assertEq(logs[i].topics[1], bytes32(agentId));
+                assertEq(logs[i].topics[2], bytes32(uint256(uint160(alice))));
+                ++matches;
+            }
+        }
+        assertEq(matches, 1, "AgentWalletUnset must fire exactly once from the adapter");
+    }
+
+    function testRewriteBindingMetadataEmitsAdapterEvent() external {
+        uint256 agentId = _register721(alice, 1);
+
+        vm.recordLogs();
+        vm.prank(admin);
+        adapter.rewriteBindingMetadata(agentId);
+
+        Vm.Log[] memory logs = vm.getRecordedLogs();
+        bytes32 topic = keccak256("BindingMetadataRewritten(uint256,address)");
+        uint256 matches;
+        for (uint256 i; i < logs.length; ++i) {
+            if (logs[i].emitter != address(adapter) || logs[i].topics.length == 0) continue;
+            if (logs[i].topics[0] == topic) {
+                assertEq(logs[i].topics[1], bytes32(agentId));
+                assertEq(logs[i].topics[2], bytes32(uint256(uint160(admin))));
+                ++matches;
+            }
+        }
+        assertEq(matches, 1, "BindingMetadataRewritten must fire exactly once from the adapter");
+    }
+
     function testSetAgentWalletPassesThroughNativeSignatureCheck() external {
         uint256 agentId = _register721(alice, 1);
         uint256 deadline = block.timestamp + 4 minutes;
@@ -309,6 +425,303 @@ contract Adapter8004Test is Test {
         vm.prank(alice);
         vm.expectRevert(bytes("invalid wallet sig"));
         adapter.setAgentWallet(agentId, wallet, deadline, signature);
+    }
+
+    function testCounterfactualRegisterEmitsEventAndReturnsHash() external {
+        IERC8004IdentityRegistry.MetadataEntry[] memory metadata = new IERC8004IdentityRegistry.MetadataEntry[](1);
+        metadata[0] = IERC8004IdentityRegistry.MetadataEntry({metadataKey: "name", metadataValue: bytes("alpha")});
+
+        bytes32 expectedHash = keccak256(abi.encode(block.chainid, address(adapter), address(token721), uint256(1)));
+
+        vm.prank(alice);
+        vm.expectEmit(true, true, true, true, address(adapter));
+        emit IERC8004AdapterCounterfactual.CounterfactualAgentRegistered(
+            expectedHash,
+            address(token721),
+            1,
+            IERCAgentBindings.TokenStandard.ERC721,
+            "ipfs://agent/cf",
+            metadata,
+            alice
+        );
+        bytes32 registrationHash = adapter.counterfactualRegister(
+            IERCAgentBindings.TokenStandard.ERC721, address(token721), 1, "ipfs://agent/cf", metadata
+        );
+
+        assertEq(registrationHash, expectedHash);
+    }
+
+    function testRegistrationHashViewMatchesEncodingAndCounterfactualEventTopic() external {
+        bytes32 viewHash = adapter.registrationHash(address(token721), 1);
+        bytes32 expectedHash = keccak256(abi.encode(block.chainid, address(adapter), address(token721), uint256(1)));
+        assertEq(viewHash, expectedHash);
+
+        vm.recordLogs();
+        vm.prank(alice);
+        bytes32 emittedHash =
+            adapter.counterfactualRegister(IERCAgentBindings.TokenStandard.ERC721, address(token721), 1, "ipfs://view");
+
+        Vm.Log[] memory entries = vm.getRecordedLogs();
+        assertEq(emittedHash, viewHash);
+        assertEq(entries.length, 1);
+        assertEq(entries[0].topics[0], IERC8004AdapterCounterfactual.CounterfactualAgentRegistered.selector);
+        assertEq(entries[0].topics[1], viewHash);
+    }
+
+    function testCounterfactualRegisterEmptyMetadataOverload() external {
+        bytes32 expectedHash = keccak256(abi.encode(block.chainid, address(adapter), address(token721), uint256(1)));
+
+        vm.prank(alice);
+        bytes32 registrationHash = adapter.counterfactualRegister(
+            IERCAgentBindings.TokenStandard.ERC721, address(token721), 1, "ipfs://agent/cf"
+        );
+
+        assertEq(registrationHash, expectedHash);
+    }
+
+    function testCounterfactualRegisterRejectsZeroTokenContract() external {
+        vm.prank(alice);
+        vm.expectRevert(Adapter8004.InvalidTokenContract.selector);
+        adapter.counterfactualRegister(
+            IERCAgentBindings.TokenStandard.ERC721, address(0), 1, "ipfs://agent/cf", _emptyMetadata()
+        );
+    }
+
+    function testCounterfactualRegisterRejectsNonController() external {
+        vm.prank(eve);
+        vm.expectRevert(abi.encodeWithSelector(Adapter8004.NotController.selector, eve, type(uint256).max));
+        adapter.counterfactualRegister(
+            IERCAgentBindings.TokenStandard.ERC721, address(token721), 1, "ipfs://agent/cf", _emptyMetadata()
+        );
+    }
+
+    function testCounterfactualRegisterRejectsReservedBindingMetadataKey() external {
+        IERC8004IdentityRegistry.MetadataEntry[] memory metadata = new IERC8004IdentityRegistry.MetadataEntry[](1);
+        metadata[0] = IERC8004IdentityRegistry.MetadataEntry({
+            metadataKey: adapter.BINDING_METADATA_KEY(),
+            metadataValue: bytes("bad")
+        });
+
+        vm.expectRevert(
+            abi.encodeWithSelector(Adapter8004.ReservedMetadataKey.selector, adapter.BINDING_METADATA_KEY())
+        );
+        vm.prank(alice);
+        adapter.counterfactualRegister(
+            IERCAgentBindings.TokenStandard.ERC721, address(token721), 1, "ipfs://agent/cf", metadata
+        );
+    }
+
+    function testCounterfactualSetAgentURIEmits() external {
+        bytes32 expectedHash = keccak256(abi.encode(block.chainid, address(adapter), address(token721), uint256(1)));
+
+        vm.prank(alice);
+        vm.expectEmit(true, true, true, true, address(adapter));
+        emit IERC8004AdapterCounterfactual.CounterfactualAgentURISet(
+            expectedHash, address(token721), 1, "ipfs://updated", alice
+        );
+        adapter.counterfactualSetAgentURI(
+            IERCAgentBindings.TokenStandard.ERC721, address(token721), 1, "ipfs://updated"
+        );
+    }
+
+    function testCounterfactualSetAgentURIRejectsZeroTokenContract() external {
+        vm.prank(alice);
+        vm.expectRevert(Adapter8004.InvalidTokenContract.selector);
+        adapter.counterfactualSetAgentURI(IERCAgentBindings.TokenStandard.ERC721, address(0), 1, "ipfs://x");
+    }
+
+    function testCounterfactualSetAgentURIRejectsNonController() external {
+        vm.prank(eve);
+        vm.expectRevert(abi.encodeWithSelector(Adapter8004.NotController.selector, eve, type(uint256).max));
+        adapter.counterfactualSetAgentURI(IERCAgentBindings.TokenStandard.ERC721, address(token721), 1, "ipfs://x");
+    }
+
+    function testCounterfactualSetMetadataEmits() external {
+        bytes32 expectedHash = keccak256(abi.encode(block.chainid, address(adapter), address(token721), uint256(1)));
+
+        vm.prank(alice);
+        vm.expectEmit(true, true, true, true, address(adapter));
+        emit IERC8004AdapterCounterfactual.CounterfactualMetadataSet(
+            expectedHash, address(token721), 1, "description", bytes("hello"), alice
+        );
+        adapter.counterfactualSetMetadata(
+            IERCAgentBindings.TokenStandard.ERC721, address(token721), 1, "description", bytes("hello")
+        );
+    }
+
+    function testCounterfactualSetMetadataRejectsZeroTokenContract() external {
+        vm.prank(alice);
+        vm.expectRevert(Adapter8004.InvalidTokenContract.selector);
+        adapter.counterfactualSetMetadata(IERCAgentBindings.TokenStandard.ERC721, address(0), 1, "k", bytes("v"));
+    }
+
+    function testCounterfactualSetMetadataRejectsNonController() external {
+        vm.prank(eve);
+        vm.expectRevert(abi.encodeWithSelector(Adapter8004.NotController.selector, eve, type(uint256).max));
+        adapter.counterfactualSetMetadata(IERCAgentBindings.TokenStandard.ERC721, address(token721), 1, "k", bytes("v"));
+    }
+
+    function testCounterfactualSetMetadataRejectsReservedBindingMetadataKey() external {
+        string memory key = adapter.BINDING_METADATA_KEY();
+
+        vm.expectRevert(abi.encodeWithSelector(Adapter8004.ReservedMetadataKey.selector, key));
+        vm.prank(alice);
+        adapter.counterfactualSetMetadata(
+            IERCAgentBindings.TokenStandard.ERC721, address(token721), 1, key, bytes("bad")
+        );
+    }
+
+    function testCounterfactualSetMetadataBatchEmits() external {
+        bytes32 expectedHash = keccak256(abi.encode(block.chainid, address(adapter), address(token721), uint256(1)));
+
+        IERC8004IdentityRegistry.MetadataEntry[] memory metadata = new IERC8004IdentityRegistry.MetadataEntry[](2);
+        metadata[0] = IERC8004IdentityRegistry.MetadataEntry({metadataKey: "a", metadataValue: bytes("1")});
+        metadata[1] = IERC8004IdentityRegistry.MetadataEntry({metadataKey: "b", metadataValue: bytes("2")});
+
+        vm.prank(alice);
+        vm.expectEmit(true, true, true, true, address(adapter));
+        emit IERC8004AdapterCounterfactual.CounterfactualMetadataBatchSet(
+            expectedHash, address(token721), 1, metadata, alice
+        );
+        adapter.counterfactualSetMetadataBatch(IERCAgentBindings.TokenStandard.ERC721, address(token721), 1, metadata);
+    }
+
+    function testCounterfactualSetMetadataBatchRejectsZeroTokenContract() external {
+        vm.prank(alice);
+        vm.expectRevert(Adapter8004.InvalidTokenContract.selector);
+        adapter.counterfactualSetMetadataBatch(IERCAgentBindings.TokenStandard.ERC721, address(0), 1, _emptyMetadata());
+    }
+
+    function testCounterfactualSetMetadataBatchRejectsNonController() external {
+        IERC8004IdentityRegistry.MetadataEntry[] memory metadata = new IERC8004IdentityRegistry.MetadataEntry[](1);
+        metadata[0] = IERC8004IdentityRegistry.MetadataEntry({metadataKey: "a", metadataValue: bytes("1")});
+
+        vm.prank(eve);
+        vm.expectRevert(abi.encodeWithSelector(Adapter8004.NotController.selector, eve, type(uint256).max));
+        adapter.counterfactualSetMetadataBatch(IERCAgentBindings.TokenStandard.ERC721, address(token721), 1, metadata);
+    }
+
+    function testCounterfactualSetMetadataBatchRejectsReservedBindingMetadataKey() external {
+        IERC8004IdentityRegistry.MetadataEntry[] memory metadata = new IERC8004IdentityRegistry.MetadataEntry[](1);
+        metadata[0] = IERC8004IdentityRegistry.MetadataEntry({
+            metadataKey: adapter.BINDING_METADATA_KEY(),
+            metadataValue: bytes("bad")
+        });
+
+        vm.expectRevert(
+            abi.encodeWithSelector(Adapter8004.ReservedMetadataKey.selector, adapter.BINDING_METADATA_KEY())
+        );
+        vm.prank(alice);
+        adapter.counterfactualSetMetadataBatch(IERCAgentBindings.TokenStandard.ERC721, address(token721), 1, metadata);
+    }
+
+    function testCounterfactualSetAgentWalletEmits() external {
+        bytes32 expectedHash = keccak256(abi.encode(block.chainid, address(adapter), address(token721), uint256(1)));
+
+        vm.prank(alice);
+        vm.expectEmit(true, true, true, true, address(adapter));
+        emit IERC8004AdapterCounterfactual.CounterfactualAgentWalletSet(
+            expectedHash, address(token721), 1, wallet, alice
+        );
+        adapter.counterfactualSetAgentWallet(IERCAgentBindings.TokenStandard.ERC721, address(token721), 1, wallet);
+    }
+
+    function testCounterfactualSetAgentWalletRejectsZeroTokenContract() external {
+        vm.prank(alice);
+        vm.expectRevert(Adapter8004.InvalidTokenContract.selector);
+        adapter.counterfactualSetAgentWallet(IERCAgentBindings.TokenStandard.ERC721, address(0), 1, wallet);
+    }
+
+    function testCounterfactualSetAgentWalletRejectsNonController() external {
+        vm.prank(eve);
+        vm.expectRevert(abi.encodeWithSelector(Adapter8004.NotController.selector, eve, type(uint256).max));
+        adapter.counterfactualSetAgentWallet(IERCAgentBindings.TokenStandard.ERC721, address(token721), 1, wallet);
+    }
+
+    function testCounterfactualUnsetAgentWalletEmits() external {
+        bytes32 expectedHash = keccak256(abi.encode(block.chainid, address(adapter), address(token721), uint256(1)));
+
+        vm.prank(alice);
+        vm.expectEmit(true, true, true, true, address(adapter));
+        emit IERC8004AdapterCounterfactual.CounterfactualAgentWalletUnset(expectedHash, address(token721), 1, alice);
+        adapter.counterfactualUnsetAgentWallet(IERCAgentBindings.TokenStandard.ERC721, address(token721), 1);
+    }
+
+    function testCounterfactualUnsetAgentWalletRejectsZeroTokenContract() external {
+        vm.prank(alice);
+        vm.expectRevert(Adapter8004.InvalidTokenContract.selector);
+        adapter.counterfactualUnsetAgentWallet(IERCAgentBindings.TokenStandard.ERC721, address(0), 1);
+    }
+
+    function testCounterfactualUnsetAgentWalletRejectsNonController() external {
+        vm.prank(eve);
+        vm.expectRevert(abi.encodeWithSelector(Adapter8004.NotController.selector, eve, type(uint256).max));
+        adapter.counterfactualUnsetAgentWallet(IERCAgentBindings.TokenStandard.ERC721, address(token721), 1);
+    }
+
+    function testCounterfactualRegistrationHashIsStableForSameInputs() external {
+        vm.prank(alice);
+        bytes32 first =
+            adapter.counterfactualRegister(IERCAgentBindings.TokenStandard.ERC721, address(token721), 1, "u1");
+
+        vm.prank(alice);
+        bytes32 second =
+            adapter.counterfactualRegister(IERCAgentBindings.TokenStandard.ERC721, address(token721), 1, "u2");
+
+        assertEq(first, second);
+    }
+
+    function testCounterfactualRegistrationHashChangesWithTokenContract() external {
+        vm.prank(alice);
+        bytes32 viaToken721 =
+            adapter.counterfactualRegister(IERCAgentBindings.TokenStandard.ERC721, address(token721), 1, "u");
+        vm.prank(alice);
+        bytes32 viaToken1155 =
+            adapter.counterfactualRegister(IERCAgentBindings.TokenStandard.ERC1155, address(token1155), 10, "u");
+
+        assertTrue(viaToken721 != viaToken1155);
+    }
+
+    function testCounterfactualRegistrationHashChangesWithTokenId() external {
+        vm.prank(alice);
+        bytes32 forId1 =
+            adapter.counterfactualRegister(IERCAgentBindings.TokenStandard.ERC721, address(token721), 1, "u");
+        vm.prank(bob);
+        bytes32 forId2 =
+            adapter.counterfactualRegister(IERCAgentBindings.TokenStandard.ERC721, address(token721), 2, "u");
+
+        assertTrue(forId1 != forId2);
+    }
+
+    function testCounterfactualRegistrationHashChangesWithChainId() external {
+        bytes32 atDefaultChain = keccak256(abi.encode(block.chainid, address(adapter), address(token721), uint256(1)));
+        bytes32 atOtherChain = keccak256(abi.encode(uint256(424242), address(adapter), address(token721), uint256(1)));
+
+        assertTrue(atDefaultChain != atOtherChain);
+
+        vm.chainId(424242);
+        vm.prank(alice);
+        bytes32 onAltChain =
+            adapter.counterfactualRegister(IERCAgentBindings.TokenStandard.ERC721, address(token721), 1, "u");
+        assertEq(onAltChain, atOtherChain);
+    }
+
+    function testCounterfactualRegistrationHashChangesWithAdapterAddress() external {
+        Adapter8004 implementation = new Adapter8004();
+        ERC1967Proxy proxy = new ERC1967Proxy(
+            address(implementation), abi.encodeCall(Adapter8004.initialize, (address(registry), admin))
+        );
+        Adapter8004 secondAdapter = Adapter8004(address(proxy));
+
+        vm.prank(alice);
+        bytes32 fromFirst =
+            adapter.counterfactualRegister(IERCAgentBindings.TokenStandard.ERC721, address(token721), 1, "u");
+        vm.prank(alice);
+        bytes32 fromSecond =
+            secondAdapter.counterfactualRegister(IERCAgentBindings.TokenStandard.ERC721, address(token721), 1, "u");
+
+        assertTrue(fromFirst != fromSecond);
+        assertTrue(address(adapter) != address(secondAdapter));
     }
 
     function testAdminCanUpdateRegistryReference() external {
@@ -353,17 +766,20 @@ contract Adapter8004Test is Test {
 
     function _register721(address caller, uint256 tokenId) internal returns (uint256) {
         vm.prank(caller);
-        return adapter.register(IERCAgentBindings.TokenStandard.ERC721, address(token721), tokenId, "", _emptyMetadata());
+        return
+            adapter.register(IERCAgentBindings.TokenStandard.ERC721, address(token721), tokenId, "", _emptyMetadata());
     }
 
     function _register1155(address caller, uint256 tokenId) internal returns (uint256) {
         vm.prank(caller);
-        return adapter.register(IERCAgentBindings.TokenStandard.ERC1155, address(token1155), tokenId, "", _emptyMetadata());
+        return
+            adapter.register(IERCAgentBindings.TokenStandard.ERC1155, address(token1155), tokenId, "", _emptyMetadata());
     }
 
     function _register6909(address caller, uint256 tokenId) internal returns (uint256) {
         vm.prank(caller);
-        return adapter.register(IERCAgentBindings.TokenStandard.ERC6909, address(token6909), tokenId, "", _emptyMetadata());
+        return
+            adapter.register(IERCAgentBindings.TokenStandard.ERC6909, address(token6909), tokenId, "", _emptyMetadata());
     }
 
     function _emptyMetadata() internal pure returns (IERC8004IdentityRegistry.MetadataEntry[] memory metadata) {
@@ -377,7 +793,9 @@ contract Adapter8004Test is Test {
         uint256 tokenId
     ) internal pure returns (bytes memory) {
         bytes memory compactTokenId = _encodeCompactUint(tokenId);
-        return abi.encodePacked(bindingContract, uint8(standard), tokenContract, uint8(compactTokenId.length), compactTokenId);
+        return abi.encodePacked(
+            bindingContract, uint8(standard), tokenContract, uint8(compactTokenId.length), compactTokenId
+        );
     }
 
     function _encodeCompactUint(uint256 value) internal pure returns (bytes memory out) {

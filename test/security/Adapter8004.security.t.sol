@@ -143,18 +143,21 @@ contract SecurityAdapter8004Test is Test {
         // Same tokenContract/tokenId pair but different standards hash to
         // different binding keys — each should yield a fresh agentId.
         vm.prank(alice);
-        uint256 a1 = adapter.register(IERCAgentBindings.TokenStandard.ERC721, address(token721), 1, "", _emptyMetadata());
+        uint256 a1 =
+            adapter.register(IERCAgentBindings.TokenStandard.ERC721, address(token721), 1, "", _emptyMetadata());
 
         // ERC721 at tokenId 1 is held by alice and would collide with the 1155
         // binding key only if (standard) were dropped from the hash. It is not.
         // Mint a fresh 1155 id to avoid polluting setUp state.
         token1155.mint(alice, 1, 1);
         vm.prank(alice);
-        uint256 a2 = adapter.register(IERCAgentBindings.TokenStandard.ERC1155, address(token1155), 1, "", _emptyMetadata());
+        uint256 a2 =
+            adapter.register(IERCAgentBindings.TokenStandard.ERC1155, address(token1155), 1, "", _emptyMetadata());
 
         token6909.mint(alice, 1, 1);
         vm.prank(alice);
-        uint256 a3 = adapter.register(IERCAgentBindings.TokenStandard.ERC6909, address(token6909), 1, "", _emptyMetadata());
+        uint256 a3 =
+            adapter.register(IERCAgentBindings.TokenStandard.ERC6909, address(token6909), 1, "", _emptyMetadata());
 
         assertTrue(a1 != a2 && a2 != a3 && a1 != a3, "agentIds must be distinct");
     }
@@ -352,17 +355,20 @@ contract SecurityAdapter8004Test is Test {
 
     function _register721(address caller, uint256 tokenId) internal returns (uint256) {
         vm.prank(caller);
-        return adapter.register(IERCAgentBindings.TokenStandard.ERC721, address(token721), tokenId, "", _emptyMetadata());
+        return
+            adapter.register(IERCAgentBindings.TokenStandard.ERC721, address(token721), tokenId, "", _emptyMetadata());
     }
 
     function _register1155(address caller, uint256 tokenId) internal returns (uint256) {
         vm.prank(caller);
-        return adapter.register(IERCAgentBindings.TokenStandard.ERC1155, address(token1155), tokenId, "", _emptyMetadata());
+        return
+            adapter.register(IERCAgentBindings.TokenStandard.ERC1155, address(token1155), tokenId, "", _emptyMetadata());
     }
 
     function _register6909(address caller, uint256 tokenId) internal returns (uint256) {
         vm.prank(caller);
-        return adapter.register(IERCAgentBindings.TokenStandard.ERC6909, address(token6909), tokenId, "", _emptyMetadata());
+        return
+            adapter.register(IERCAgentBindings.TokenStandard.ERC6909, address(token6909), tokenId, "", _emptyMetadata());
     }
 
     function _emptyMetadata() internal pure returns (IERC8004IdentityRegistry.MetadataEntry[] memory) {

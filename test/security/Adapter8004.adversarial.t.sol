@@ -15,8 +15,13 @@ import {MockERC6909} from "../mocks/MockERC6909.sol";
 import {MaliciousERC721} from "./mocks/MaliciousERC721.sol";
 import {MaliciousERC1155} from "./mocks/MaliciousERC1155.sol";
 import {MaliciousERC6909} from "./mocks/MaliciousERC6909.sol";
+import {ReentrantERC721} from "./mocks/ReentrantERC721.sol";
 import {RevertingToken} from "./mocks/RevertingToken.sol";
 import {OverflowRegistry} from "./mocks/OverflowRegistry.sol";
+
+interface IReentrancyGuardErrors {
+    error ReentrancyGuardReentrantCall();
+}
 
 /// @notice Probes the adapter's trust boundary with hostile / malformed
 /// token contracts and hostile registries. Every test here asserts that
@@ -96,7 +101,8 @@ contract AdversarialAdapter8004Test is Test {
         mal.setOwner(1, alice);
 
         vm.prank(alice);
-        uint256 agentId = adapter.register(IERCAgentBindings.TokenStandard.ERC721, address(mal), 1, "", _emptyMetadata());
+        uint256 agentId =
+            adapter.register(IERCAgentBindings.TokenStandard.ERC721, address(mal), 1, "", _emptyMetadata());
 
         assertTrue(adapter.isController(agentId, alice));
         assertFalse(adapter.isController(agentId, bob));
@@ -110,7 +116,8 @@ contract AdversarialAdapter8004Test is Test {
         mal.setOwner(1, alice);
 
         vm.prank(alice);
-        uint256 agentId = adapter.register(IERCAgentBindings.TokenStandard.ERC721, address(mal), 1, "", _emptyMetadata());
+        uint256 agentId =
+            adapter.register(IERCAgentBindings.TokenStandard.ERC721, address(mal), 1, "", _emptyMetadata());
 
         vm.prank(alice);
         adapter.setMetadata(agentId, "k", bytes("alice"));
@@ -237,7 +244,8 @@ contract AdversarialAdapter8004Test is Test {
         mal.setOwner(1, alice);
 
         vm.prank(alice);
-        uint256 agentId = adapter.register(IERCAgentBindings.TokenStandard.ERC721, address(mal), 1, "", _emptyMetadata());
+        uint256 agentId =
+            adapter.register(IERCAgentBindings.TokenStandard.ERC721, address(mal), 1, "", _emptyMetadata());
 
         IERCAgentBindings.Binding memory binding = adapter.bindingOf(agentId);
         assertEq(binding.tokenContract, address(mal));
@@ -288,6 +296,31 @@ contract AdversarialAdapter8004Test is Test {
         vm.prank(admin);
         vm.expectRevert();
         adapter.upgradeToAndCall(address(freshImpl), "");
+    }
+
+    /// On-chain register reentrancy: a malicious ERC-721 attempts to reenter `adapter.register(...)`
+    /// during its own `ownerOf` staticcall. The adapter's `nonReentrant` guard fires on the SLOAD
+    /// entry check (allowed inside the static frame), reverting the inner frame with
+    /// `ReentrancyGuardReentrantCall()`. The mock propagates that selector verbatim, and the outer
+    /// register call surfaces it to the caller — proving the reentrancy lock is engaged.
+    function testRegisterReentryRevertsWithReentrancyGuardReentrantCall() external {
+        ReentrantERC721 mal = new ReentrantERC721();
+        mal.setOwner(1, alice);
+        mal.setReentry(
+            address(adapter),
+            abi.encodeWithSignature(
+                "register(uint8,address,uint256,string,(string,bytes)[])",
+                IERCAgentBindings.TokenStandard.ERC721,
+                address(mal),
+                1,
+                "",
+                new IERC8004IdentityRegistry.MetadataEntry[](0)
+            )
+        );
+
+        vm.prank(alice);
+        vm.expectRevert(IReentrancyGuardErrors.ReentrancyGuardReentrantCall.selector);
+        adapter.register(IERCAgentBindings.TokenStandard.ERC721, address(mal), 1, "", _emptyMetadata());
     }
 
     function _emptyMetadata() internal pure returns (IERC8004IdentityRegistry.MetadataEntry[] memory) {
