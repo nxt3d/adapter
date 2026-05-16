@@ -564,6 +564,9 @@ contract Adapter8004 is
         );
     }
 
+    /// @dev NAME HAZARD: `_requireNotReservedBindingKey` (this one) vs `_requireNoReservedBindingKey`
+    /// (below) differ only by "Not"/"No". This singular variant guards ONE key; the plural variant
+    /// guards an array. Picking the wrong one still compiles — confirm the argument type when calling.
     function _requireNotReservedBindingKey(string calldata metadataKey) internal pure {
         // 1. Reject writes that target the canonical binding metadata slot.
         if (keccak256(bytes(metadataKey)) == BINDING_METADATA_KEY_HASH) {
@@ -571,6 +574,9 @@ contract Adapter8004 is
         }
     }
 
+    /// @dev NAME HAZARD: `_requireNoReservedBindingKey` (this one) vs `_requireNotReservedBindingKey`
+    /// (above) differ only by "No"/"Not". This plural variant guards an ARRAY; the singular variant
+    /// guards one key. Picking the wrong one still compiles — confirm the argument type when calling.
     function _requireNoReservedBindingKey(IERC8004IdentityRegistry.MetadataEntry[] memory metadata) internal pure {
         // 1. Scan user-supplied metadata and reject any entry that targets the canonical binding metadata slot.
         uint256 length = metadata.length;
