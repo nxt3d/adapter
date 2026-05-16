@@ -9,6 +9,7 @@ import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol
 import {Initializable} from "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
 import {OwnableUpgradeable} from "@openzeppelin/contracts-upgradeable/access/OwnableUpgradeable.sol";
 import {UUPSUpgradeable} from "@openzeppelin/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
+import {IDelegateRegistry} from "./interfaces/IDelegateRegistry.sol";
 import {IERCAgentBindings} from "./interfaces/IERCAgentBindings.sol";
 import {IERC8004AdapterCounterfactual} from "./interfaces/IERC8004AdapterCounterfactual.sol";
 import {IERC8004AdapterRegistration} from "./interfaces/IERC8004AdapterRegistration.sol";
@@ -28,6 +29,15 @@ contract Adapter8004 is
 {
     string public constant BINDING_METADATA_KEY = "agent-binding";
     bytes32 private constant BINDING_METADATA_KEY_HASH = keccak256(bytes(BINDING_METADATA_KEY));
+
+    /// @notice Canonical immutable delegate.xyz v2 registry, identical on Ethereum, Base, and Sepolia.
+    /// A delegated hot wallet authorized here can drive ERC-721-bound agents while the NFT stays in
+    /// cold storage. Authorization fails closed to direct ownership when the registry has no code.
+    address public constant DELEGATE_REGISTRY = 0x00000000000000447e69651d841bD8D104Bed493;
+
+    /// @notice Rights identifier a cold wallet delegates to scope a hot wallet to Adapter8004 management
+    /// only. delegate.xyz v2 also accepts empty/full delegations when this nonzero rights value is checked.
+    bytes32 public constant DELEGATE_RIGHTS = keccak256("adapter8004.manage");
 
     error InvalidTokenContract();
     error ReservedMetadataKey(string metadataKey);
@@ -505,18 +515,7 @@ contract Adapter8004 is
     }
 
     function _hasBindingControl(Binding memory binding, address account) internal view returns (bool) {
-        // 1. ERC-721 control means current NFT ownership.
-        if (binding.standard == TokenStandard.ERC721) {
-            return IERC721(binding.tokenContract).ownerOf(binding.tokenId) == account;
-        }
-
-        // 2. ERC-1155 control means any positive balance for the bound id.
-        if (binding.standard == TokenStandard.ERC1155) {
-            return IERC1155(binding.tokenContract).balanceOf(account, binding.tokenId) > 0;
-        }
-
-        // 3. ERC-6909 control also means any positive balance for the bound id.
-        return IERC6909(binding.tokenContract).balanceOf(account, binding.tokenId) > 0;
+        return _hasBindingControl(binding.standard, binding.tokenContract, binding.tokenId, account);
     }
 
     function _hasBindingControl(TokenStandard standard, address tokenContract, uint256 tokenId, address account)
@@ -524,18 +523,45 @@ contract Adapter8004 is
         view
         returns (bool)
     {
-        // 1. ERC-721 control means current NFT ownership.
+        // 1. ERC-721 control means current NFT ownership, or a valid delegate.xyz delegation from the
+        //    current owner. Direct ownership is checked first so current owners never pay a registry call.
         if (standard == TokenStandard.ERC721) {
-            return IERC721(tokenContract).ownerOf(tokenId) == account;
+            address owner = IERC721(tokenContract).ownerOf(tokenId);
+            if (account == owner) {
+                return true;
+            }
+            return _isERC721Delegate(account, owner, tokenContract, tokenId);
         }
 
         // 2. ERC-1155 control means any positive balance for the bound id.
+        //    No delegate.xyz check: the no-vault API cannot soundly map a delegation to a holder.
         if (standard == TokenStandard.ERC1155) {
             return IERC1155(tokenContract).balanceOf(account, tokenId) > 0;
         }
 
         // 3. ERC-6909 control also means any positive balance for the bound id.
+        //    No delegate.xyz check: v2 has no ERC-6909 token-id delegation primitive.
         return IERC6909(tokenContract).balanceOf(account, tokenId) > 0;
+    }
+
+    /// @dev Consults the immutable delegate.xyz v2 registry for an ERC-721 delegation from the current
+    /// `owner` (the vault) to `account` (the hot wallet). `checkDelegateForERC721` already folds in
+    /// token-level, contract-level, and all-wallet delegations, so no separate calls are needed.
+    /// Fails closed: if the registry has no code on this chain, only direct ownership authorizes.
+    function _isERC721Delegate(address account, address owner, address tokenContract, uint256 tokenId)
+        internal
+        view
+        returns (bool)
+    {
+        // 1. Fail closed to direct ownership when the canonical registry is absent on this chain.
+        if (DELEGATE_REGISTRY.code.length == 0) {
+            return false;
+        }
+
+        // 2. Accept either a `DELEGATE_RIGHTS`-scoped delegation or an empty/full delegation.
+        return IDelegateRegistry(DELEGATE_REGISTRY).checkDelegateForERC721(
+            account, owner, tokenContract, tokenId, DELEGATE_RIGHTS
+        );
     }
 
     function _requireNotReservedBindingKey(string calldata metadataKey) internal pure {
